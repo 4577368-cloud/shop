@@ -9,6 +9,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -26,15 +27,34 @@ public final class ShopifyHmacUtils {
         if (StringUtils.isAnyBlank(hmac, apiSecret) || params == null) {
             return false;
         }
+        String secret = apiSecret.trim();
         String message = params.entrySet().stream()
+                .filter(e -> e.getKey() != null)
                 .filter(e -> !"hmac".equalsIgnoreCase(e.getKey()) && !"signature".equalsIgnoreCase(e.getKey()))
                 .sorted(Map.Entry.comparingByKey())
-                .map(e -> e.getKey() + "=" + e.getValue())
+                .map(e -> encodeQueryPart(e.getKey()) + "=" + encodeQueryPart(StringUtils.defaultString(e.getValue())))
                 .collect(Collectors.joining("&"));
-        String calculated = hmacSha256Hex(apiSecret, message);
-        return MessageDigest.isEqual(
-                calculated.getBytes(StandardCharsets.UTF_8),
-                hmac.getBytes(StandardCharsets.UTF_8));
+        String calculated = hmacSha256Hex(secret, message);
+        return digestEqualHex(calculated, hmac.trim());
+    }
+
+    /**
+     * Shopify requires &, %, = escaped in query parts used for HMAC.
+     */
+    private static String encodeQueryPart(String value) {
+        return value
+                .replace("%", "%25")
+                .replace("&", "%26")
+                .replace("=", "%3D");
+    }
+
+    private static boolean digestEqualHex(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        byte[] left = a.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8);
+        byte[] right = b.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.UTF_8);
+        return MessageDigest.isEqual(left, right);
     }
 
     /**
@@ -44,10 +64,10 @@ public final class ShopifyHmacUtils {
         if (rawBody == null || StringUtils.isAnyBlank(hmacHeader, apiSecret)) {
             return false;
         }
-        String calculated = hmacSha256Base64(apiSecret, rawBody);
+        String calculated = hmacSha256Base64(apiSecret.trim(), rawBody);
         return MessageDigest.isEqual(
                 calculated.getBytes(StandardCharsets.UTF_8),
-                hmacHeader.getBytes(StandardCharsets.UTF_8));
+                hmacHeader.trim().getBytes(StandardCharsets.UTF_8));
     }
 
     public static String hmacSha256Hex(String secret, String message) {

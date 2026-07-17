@@ -46,10 +46,14 @@ public class ShopifyAuthService {
         if (queryParams == null || queryParams.isEmpty()) {
             throw new CustomException("Shopify callback params empty");
         }
+        String shopHint = queryParams.get("shop");
         String hmac = queryParams.get("hmac");
-        if (!ShopifyHmacUtils.verifyOAuthQueryHmac(queryParams, hmac, shopifyProperties.getApiSecret())) {
-            log.error("Shopify callback HMAC invalid shop={}", queryParams.get("shop"));
-            throw new CustomException("Shopify callback HMAC invalid");
+        String apiSecret = StringUtils.trimToEmpty(shopifyProperties.getApiSecret());
+        if (!ShopifyHmacUtils.verifyOAuthQueryHmac(queryParams, hmac, apiSecret)) {
+            log.error("Shopify callback HMAC invalid shop={} paramKeys={}",
+                    shopHint, queryParams.keySet());
+            throw new CustomException(
+                    "Shopify callback HMAC invalid. Check TANG_PLUGIN_SHOPIFY_API_SECRET matches Partner App client secret.");
         }
 
         String shopDomain = normalizeAndValidateShop(queryParams.get("shop"));
@@ -58,12 +62,28 @@ public class ShopifyAuthService {
             throw new CustomException("Shopify callback code blank, shopDomain=" + shopDomain);
         }
 
-        JSONObject tokenJson = shopifyAuthComponent.exchangeAccessToken(shopDomain, code);
+        JSONObject tokenJson;
+        try {
+            tokenJson = shopifyAuthComponent.exchangeAccessToken(shopDomain, code);
+        } catch (CustomException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Shopify token exchange unexpected shopDomain={}", shopDomain, e);
+            throw new CustomException("Shopify token exchange failed, shopDomain=" + shopDomain
+                    + ", cause=" + e.getMessage(), e);
+        }
         String accessToken = tokenJson.getString("access_token");
         String scope = tokenJson.getString("scope");
         String shopName = toShopName(shopDomain);
 
-        Long authId = shopifyStoreAuthService.saveActiveAuth(shopName, shopDomain, accessToken, scope);
+        Long authId;
+        try {
+            authId = shopifyStoreAuthService.saveActiveAuth(shopName, shopDomain, accessToken, scope);
+        } catch (Exception e) {
+            log.error("Shopify auth persist failed shopDomain={}", shopDomain, e);
+            throw new CustomException("Shopify auth save failed, shopDomain=" + shopDomain
+                    + ", cause=" + e.getMessage(), e);
+        }
         log.info("Shopify auth saved shopDomain={} shopName={} authId={}", shopDomain, shopName, authId);
 
         // Fulfillment mount intentionally skipped in phase-2.
@@ -84,8 +104,14 @@ public class ShopifyAuthService {
     }
 
     private void assertConfigured() {
-        if (StringUtils.isAnyBlank(shopifyProperties.getApiKey(), shopifyProperties.getApiSecret())) {
-            throw new CustomException("Shopify api-key/api-secret not configured");
+        String apiKey = StringUtils.trimToEmpty(shopifyProperties.getApiKey());
+        String apiSecret = StringUtils.trimToEmpty(shopifyProperties.getApiSecret());
+        if (StringUtils.isAnyBlank(apiKey, apiSecret)) {
+            throw new CustomException(
+                    "Shopify api-key/api-secret not configured on server (check Render env TANG_PLUGIN_SHOPIFY_API_KEY / _API_SECRET)");
+        }
+        if (StringUtils.isBlank(shopifyProperties.getRedirectUri())) {
+            throw new CustomException("Shopify redirect-uri not configured (TANG_PLUGIN_SHOPIFY_REDIRECT_URI)");
         }
     }
 

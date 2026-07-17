@@ -37,8 +37,8 @@ public class ShopifyAuthComponent {
         String domain = ShopifyGraphqlClient.normalizeDomain(shopDomain);
         String url = "https://" + domain + "/admin/oauth/access_token";
         JSONObject body = new JSONObject();
-        body.put("client_id", shopifyProperties.getApiKey());
-        body.put("client_secret", shopifyProperties.getApiSecret());
+        body.put("client_id", StringUtils.trim(shopifyProperties.getApiKey()));
+        body.put("client_secret", StringUtils.trim(shopifyProperties.getApiSecret()));
         body.put("code", code);
         try {
             String raw = restClient.post()
@@ -46,17 +46,30 @@ public class ShopifyAuthComponent {
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body.toJSONString())
                     .retrieve()
+                    .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
+                            (request, response) -> {
+                                String errBody = new String(response.getBody().readAllBytes(),
+                                        java.nio.charset.StandardCharsets.UTF_8);
+                                log.error("Shopify token exchange HTTP {} shopDomain={} body={}",
+                                        response.getStatusCode(), domain, errBody);
+                                throw new CustomException("Shopify token exchange HTTP "
+                                        + response.getStatusCode() + ", shopDomain=" + domain
+                                        + ", body=" + errBody);
+                            })
                     .body(String.class);
             JSONObject json = JSONObject.parseObject(raw);
             if (json == null || StringUtils.isBlank(json.getString("access_token"))) {
-                log.error("Shopify token exchange empty shopDomain={}", domain);
+                log.error("Shopify token exchange empty shopDomain={} raw={}", domain, raw);
                 throw new CustomException("Shopify token exchange failed, shopDomain=" + domain);
             }
             log.info("Shopify token exchange ok shopDomain={}", domain);
             return json;
+        } catch (CustomException e) {
+            throw e;
         } catch (RestClientException e) {
             log.error("Shopify token exchange HTTP failed shopDomain={}", domain, e);
-            throw new CustomException("Shopify token exchange HTTP failed, shopDomain=" + domain, e);
+            throw new CustomException("Shopify token exchange HTTP failed, shopDomain=" + domain
+                    + ", cause=" + e.getMessage(), e);
         }
     }
 
