@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: tangbuy-plugin
+  datasource:
+    # Local default: file H2. On Render, override with SPRING_DATASOURCE_URL (see render.yaml).
+    url: jdbc:h2:file:./data/tangbuy-plugin;MODE=MySQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+server:
+  # Render / PaaS inject PORT
+  port: ${PORT:8088}
+
+tang:
+  plugin:
+    lock:
+      enabled: false
+    exchange-rate:
+      default: 1.0
+    shopify:
+      api-version: "2025-01"
+      # Prefer env on Render: TANG_PLUGIN_SHOPIFY_API_KEY / _API_SECRET / ...
+      api-key: ${TANG_PLUGIN_SHOPIFY_API_KEY:}
+      api-secret: ${TANG_PLUGIN_SHOPIFY_API_SECRET:}
+      scopes: "read_orders,write_orders"
+      redirect-uri: ${TANG_PLUGIN_SHOPIFY_REDIRECT_URI:http://localhost:8088/api/plugin/shopify/auth/callback}
+      webhook-base-url: ${TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL:http://localhost:8088}
+      polling:
+        enabled: false
+        fixed-delay-ms: 300000
+      webhook:
+        register-products-update: false
+      # Local-dev fallback only (Provider prefers JDBC ACTIVE auth)
+      test-shops:
+        - shop-name: "your-shop"
+          shop-domain: "your-shop.myshopify.com"
+          access-token: ""

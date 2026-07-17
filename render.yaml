@@ -1,0 +1,28 @@
+# Render Blueprint — connect this repo (tangbuy-plugin as root) then "Apply"
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: tangbuy-plugin
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/plugin/health
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
+    envVars:
+      # Render also injects PORT automatically; keep Spring aligned
+      - key: JAVA_OPTS
+        value: "-XX:MaxRAMPercentage=75.0"
+      # Ephemeral H2 for smoke tests (data resets on restart). Switch to Postgres later.
+      - key: SPRING_DATASOURCE_URL
+        value: "jdbc:h2:mem:tangbuy;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
+      - key: SPRING_H2_CONSOLE_ENABLED
+        value: "false"
+      # Fill after you have Shopify Partner credentials (or set in Render Dashboard)
+      - key: TANG_PLUGIN_SHOPIFY_API_KEY
+        sync: false
+      - key: TANG_PLUGIN_SHOPIFY_API_SECRET
+        sync: false
+      - key: TANG_PLUGIN_SHOPIFY_REDIRECT_URI
+        sync: false
+      - key: TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL
+        sync: false
