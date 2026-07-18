@@ -73,8 +73,15 @@ public class ShopifyWebhookComponent {
         JSONObject payload = data == null ? null : data.getJSONObject("webhookSubscriptionCreate");
         if (payload != null && payload.getJSONArray("userErrors") != null
                 && !payload.getJSONArray("userErrors").isEmpty()) {
+            String errors = payload.getJSONArray("userErrors").toString();
+            // Idempotent: an existing subscription for this topic/callback is a success, not a failure.
+            if (StringUtils.containsIgnoreCase(errors, "already been taken")) {
+                log.info("Shopify webhook already registered (idempotent) shopDomain={} topic={}",
+                        shopDomain, graphqlTopic);
+                return;
+            }
             log.error("Shopify webhook userErrors shopDomain={} topic={} errors={}",
-                    shopDomain, graphqlTopic, payload.getJSONArray("userErrors"));
+                    shopDomain, graphqlTopic, errors);
             throw new CustomException("Shopify webhook create userErrors, shopDomain=" + shopDomain
                     + ", topic=" + graphqlTopic);
         }
