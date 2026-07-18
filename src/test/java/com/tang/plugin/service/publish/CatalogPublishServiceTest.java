@@ -23,6 +23,7 @@ import java.time.Instant;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -89,7 +90,7 @@ class CatalogPublishServiceTest {
     void publishSuccessMarksPublishedAndBackfills() {
         seedAuth("read_products,write_products");
         when(shopifyProductPublishComponent.createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
         PublishResultVO vo = catalogPublishService.publish(SHOP, candidateId);
@@ -108,7 +109,7 @@ class CatalogPublishServiceTest {
     void repeatWhenPublishedShortCircuitsWithoutSecondShopifyCall() {
         seedAuth("write_products");
         when(shopifyProductPublishComponent.createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
         catalogPublishService.publish(SHOP, candidateId);
@@ -117,7 +118,7 @@ class CatalogPublishServiceTest {
         assertEquals("PUBLISHED", second.getPublishStatus());
         assertEquals("gid://shopify/Product/100", second.getShopifyProductId());
         verify(shopifyProductPublishComponent, times(1)).createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -132,7 +133,7 @@ class CatalogPublishServiceTest {
 
         assertEquals("PUBLISHING", vo.getPublishStatus());
         verify(shopifyProductPublishComponent, never()).createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -145,7 +146,7 @@ class CatalogPublishServiceTest {
         assertEquals(ProductPublishStatus.PENDING, row.getPublishStatus());
         assertEquals(0, row.getAttempts());
         verify(shopifyProductPublishComponent, never()).createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any());
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -164,7 +165,7 @@ class CatalogPublishServiceTest {
     void shopifyFailureMarksFailedAndRethrows() {
         seedAuth("write_products");
         when(shopifyProductPublishComponent.createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenThrow(new CustomException("Shopify productSet userErrors"));
 
         assertThrows(CustomException.class, () -> catalogPublishService.publish(SHOP, candidateId));
@@ -179,7 +180,7 @@ class CatalogPublishServiceTest {
     void skuPassedAsSanitizedCandidateId() {
         seedAuth("write_products");
         when(shopifyProductPublishComponent.createSellableProduct(
-                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any()))
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
         catalogPublishService.publish(SHOP, candidateId);
@@ -187,7 +188,27 @@ class CatalogPublishServiceTest {
         ArgumentCaptor<String> skuCaptor = ArgumentCaptor.forClass(String.class);
         verify(shopifyProductPublishComponent).createSellableProduct(
                 eq(SHOP), eq(DOMAIN), eq("token-xyz"), anyString(), any(BigDecimal.class),
-                skuCaptor.capture(), any());
+                skuCaptor.capture(), any(), any(), any());
         assertEquals(candidateId.trim().replaceAll("\\s+", ""), skuCaptor.getValue());
+    }
+
+    @Test
+    void descriptionAndImagePassedThroughForEnrichment() {
+        seedAuth("write_products");
+        when(shopifyProductPublishComponent.createSellableProduct(
+                anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
+                .thenReturn(ok());
+
+        catalogPublishService.publish(SHOP, candidateId);
+
+        ArgumentCaptor<String> descCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> imageCaptor = ArgumentCaptor.forClass(String.class);
+        verify(shopifyProductPublishComponent).createSellableProduct(
+                eq(SHOP), eq(DOMAIN), eq("token-xyz"), anyString(), any(BigDecimal.class),
+                anyString(), any(), descCaptor.capture(), imageCaptor.capture());
+        // First catalog entry carries sku_attr + supplier + platform and an https image_url.
+        assertNotNull(descCaptor.getValue());
+        assertTrue(descCaptor.getValue().contains("<p>"));
+        assertTrue(imageCaptor.getValue().startsWith("http"));
     }
 }

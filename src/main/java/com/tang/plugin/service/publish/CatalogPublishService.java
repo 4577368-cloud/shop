@@ -95,7 +95,8 @@ public class CatalogPublishService {
         try {
             ShopifyCreateProductResult created = shopifyProductPublishComponent.createSellableProduct(
                     shopName, auth.getShopDomain(), auth.getAccessToken(),
-                    candidate.getTitle(), salePrice, sanitizeSku(candidateId), candidate.getBarcode());
+                    candidate.getTitle(), salePrice, sanitizeSku(candidateId), candidate.getBarcode(),
+                    buildDescriptionHtml(candidate), candidate.getImageUrl());
 
             productPublishRecordService.markPublished(record.getId(), created.getProductId(),
                     created.getHandle(), created.getVariantId(), created.getInventoryItemId());
@@ -162,6 +163,34 @@ public class CatalogPublishService {
         return Arrays.stream(scope.split(","))
                 .map(String::trim)
                 .anyMatch(required::equals);
+    }
+
+    /**
+     * Minimal product description from the candidate: 规格 (sku_attr), 供应商 (supplier_shop),
+     * 货源平台 (upstream_platform). Values are HTML-escaped. Returns null when all fields are blank.
+     */
+    private static String buildDescriptionHtml(TangbuyCatalogProduct c) {
+        StringBuilder sb = new StringBuilder();
+        appendLine(sb, "规格", c.getSkuAttr());
+        appendLine(sb, "供应商", c.getSupplierShop());
+        appendLine(sb, "货源平台", c.getUpstreamPlatform());
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    private static void appendLine(StringBuilder sb, String label, String value) {
+        if (StringUtils.isNotBlank(value)) {
+            sb.append("<p>").append(escapeHtml(label)).append("：")
+                    .append(escapeHtml(value.trim())).append("</p>");
+        }
+    }
+
+    /** Minimal HTML escaping for plain-text values embedded into descriptionHtml. */
+    private static String escapeHtml(String s) {
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     /** Minimal SKU cleansing: trim, strip whitespace/control chars, cap length. */
