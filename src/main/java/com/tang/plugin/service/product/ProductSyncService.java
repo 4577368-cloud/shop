@@ -15,6 +15,7 @@ import com.tang.plugin.service.publish.handler.ProductPlatformHandlerHolder;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -40,6 +41,22 @@ public class ProductSyncService {
     private ThirdPlatformProductMediaRepository thirdPlatformProductMediaRepository;
     @Resource
     private TxManger txManger;
+
+    /**
+     * Fire-and-forget full product pull triggered right after a successful OAuth callback.
+     * Runs off the request thread so it never blocks the redirect back to the frontend; any
+     * failure is logged and swallowed (the shop is still authorized, sync can be retried later).
+     */
+    @Async
+    public void asyncFullSyncShopify(String shopName) {
+        try {
+            log.info("Async product sync (post-auth) started shopName={}", shopName);
+            syncShopifyByShopName(shopName, null);
+            log.info("Async product sync (post-auth) finished shopName={}", shopName);
+        } catch (Exception e) {
+            log.error("Async product sync (post-auth) failed shopName={}", shopName, e);
+        }
+    }
 
     /**
      * Sync Shopify products for one shop with an optional incremental window.

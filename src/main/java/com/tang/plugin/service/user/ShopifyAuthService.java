@@ -7,6 +7,7 @@ import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
 import com.tang.plugin.service.order.external.component.ShopifyAuthComponent;
+import com.tang.plugin.service.product.ProductSyncService;
 import com.tang.plugin.service.webhook.component.ShopifyWebhookComponent;
 import com.tang.plugin.utils.ShopifyHmacUtils;
 import jakarta.annotation.Resource;
@@ -36,6 +37,8 @@ public class ShopifyAuthService {
     private ShopifyWebhookComponent shopifyWebhookComponent;
     @Resource
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
+    @Resource
+    private ProductSyncService productSyncService;
 
     /**
      * Read-only auth status for a shop, used by the frontend to restore state after OAuth redirect.
@@ -128,6 +131,14 @@ public class ShopifyAuthService {
             shopifyWebhookComponent.registerDefaultWebhooks(shopName, shopDomain, accessToken);
         } catch (Exception e) {
             log.error("Shopify webhook register after auth failed shopDomain={}", shopDomain, e);
+        }
+
+        // Fire-and-forget product pull so the mirror is populated right after authorization.
+        // Runs async; never blocks the callback redirect and never fails the auth on error.
+        try {
+            productSyncService.asyncFullSyncShopify(shopName);
+        } catch (Exception e) {
+            log.error("Trigger post-auth product sync failed shopName={}", shopName, e);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
