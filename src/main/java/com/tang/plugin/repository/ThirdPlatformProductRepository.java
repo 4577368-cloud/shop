@@ -6,11 +6,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * JDBC mirror repository for {@code third_platform_product}. Upsert by (shop_name, item_id).
@@ -19,8 +20,62 @@ import java.time.Instant;
 @Repository
 public class ThirdPlatformProductRepository {
 
+    private static final RowMapper<ThirdPlatformProduct> ROW_MAPPER = (rs, rowNum) -> new ThirdPlatformProduct()
+            .setId(rs.getLong("id"))
+            .setShopName(rs.getString("shop_name"))
+            .setShopType(rs.getString("shop_type"))
+            .setThirdPlatformItemId(rs.getString("third_platform_item_id"))
+            .setHandle(rs.getString("handle"))
+            .setTitle(rs.getString("title"))
+            .setDescription(rs.getString("description"))
+            .setStatus(rs.getString("status"))
+            .setCurrency(rs.getString("currency"))
+            .setMinPrice(rs.getBigDecimal("min_price"))
+            .setMaxPrice(rs.getBigDecimal("max_price"))
+            .setMinPriceLocal(rs.getBigDecimal("min_price_local"))
+            .setMaxPriceLocal(rs.getBigDecimal("max_price_local"))
+            .setMinWeightGrams((Double) rs.getObject("min_weight_grams"))
+            .setMaxWeightGrams((Double) rs.getObject("max_weight_grams"))
+            .setPrimaryImageUrl(rs.getString("primary_image_url"))
+            .setUpdatedAt(toInstant(rs.getTimestamp("updated_at")))
+            .setDelFlag(rs.getInt("del_flag"));
+
     @Resource
     private JdbcTemplate jdbcTemplate;
+
+    /**
+     * List active SPU mirror rows for a shop (del_flag = 0), most recently updated first.
+     */
+    public List<ThirdPlatformProduct> listByShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return List.of();
+        }
+        return jdbcTemplate.query(
+                """
+                SELECT id, shop_name, shop_type, third_platform_item_id, handle, title, description, status,
+                       currency, min_price, max_price, min_price_local, max_price_local,
+                       min_weight_grams, max_weight_grams, primary_image_url, updated_at, del_flag
+                FROM third_platform_product
+                WHERE shop_name = ? AND del_flag = 0
+                ORDER BY updated_at DESC NULLS LAST, id DESC
+                """,
+                ROW_MAPPER,
+                shopName);
+    }
+
+    /**
+     * Count active SPU mirror rows for a shop (del_flag = 0).
+     */
+    public int countByShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return 0;
+        }
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM third_platform_product WHERE shop_name = ? AND del_flag = 0",
+                Integer.class,
+                shopName);
+        return count == null ? 0 : count;
+    }
 
     /**
      * Upsert SPU mirror keyed by (shop_name, third_platform_item_id).
@@ -97,5 +152,9 @@ public class ThirdPlatformProductRepository {
 
     private static Timestamp toTimestamp(Instant instant) {
         return instant == null ? null : Timestamp.from(instant);
+    }
+
+    private static Instant toInstant(Timestamp ts) {
+        return ts == null ? null : ts.toInstant();
     }
 }
