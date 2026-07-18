@@ -1,5 +1,11 @@
 # Render Blueprint — connect this repo (tangbuy-plugin as root) then "Apply"
 # https://render.com/docs/blueprint-spec
+databases:
+  - name: tangbuy-db
+    plan: free
+    databaseName: tangbuy
+    user: tangbuy
+
 services:
   - type: web
     name: tangbuy-plugin
@@ -12,11 +18,34 @@ services:
       # Render also injects PORT automatically; keep Spring aligned
       - key: JAVA_OPTS
         value: "-XX:MaxRAMPercentage=75.0"
-      # Ephemeral H2 for smoke tests (data resets on restart). Switch to Postgres later.
-      - key: SPRING_DATASOURCE_URL
-        value: "jdbc:h2:mem:tangbuy;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE"
-      - key: SPRING_H2_CONSOLE_ENABLED
-        value: "false"
+      # Activate the persistent PostgreSQL + internal-auth profile
+      - key: SPRING_PROFILES_ACTIVE
+        value: "prod"
+      # Persistent PostgreSQL (managed by Render). JDBC URL is built from these parts
+      # in application-prod.yml (Render does not expose a jdbc: URL directly).
+      - key: DB_HOST
+        fromDatabase:
+          name: tangbuy-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: tangbuy-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: tangbuy-db
+          property: database
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: tangbuy-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: tangbuy-db
+          property: password
+      # Internal token for /api/plugin/procurement/** (set the value in the Render Dashboard)
+      - key: TANG_PLUGIN_INTERNAL_TOKEN
+        sync: false
       # Fill after you have Shopify Partner credentials (or set in Render Dashboard)
       - key: TANG_PLUGIN_SHOPIFY_API_KEY
         sync: false

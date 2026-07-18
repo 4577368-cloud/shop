@@ -25,6 +25,7 @@ public class ShopifyProperties {
 
     private Polling polling = new Polling();
     private Webhook webhook = new Webhook();
+    private Product product = new Product();
 
     /** Local-dev fallback only; Provider prefers JDBC ACTIVE rows */
     private List<TestShop> testShops = new ArrayList<>();
@@ -39,6 +40,23 @@ public class ShopifyProperties {
     public static class Webhook {
         /** products/update subscription — phase-2 default off */
         private boolean registerProductsUpdate = false;
+    }
+
+    @Data
+    public static class Product {
+        /** products connection page size (cursor pagination). */
+        private int pageSize = 50;
+        /** variants(first:) — no deep nested pagination in P1. */
+        private int variantsFirst = 100;
+        /** media(first:) — no deep nested pagination in P1. */
+        private int mediaFirst = 50;
+        /** Product sync polling — default off in P1. */
+        private boolean pollingEnabled = false;
+        private long pollingFixedDelayMs = 600_000L;
+        /** Incremental window minutes for polling updated_at lower bound. */
+        private long pollingWindowMinutes = 60L;
+        /** Safety cap on products pages. */
+        private int maxPages = 50;
     }
 
     @Data

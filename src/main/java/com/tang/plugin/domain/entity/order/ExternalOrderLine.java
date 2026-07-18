@@ -1,5 +1,6 @@
 package com.tang.plugin.domain.entity.order;
 
+import com.tang.plugin.enums.order.OrderLineBindingStatus;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -15,4 +16,9 @@ public class ExternalOrderLine {
     private Integer quantity;
     private BigDecimal price;
     private String outerVariantId;
+
+    // --- Binding consumption (P1): populated by OrderBindingResolver, not persisted ---
+    private String tangbuyProductId;
+    private String tangbuySkuId;
+    private OrderLineBindingStatus bindingStatus;
 }

@@ -4,6 +4,7 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,8 +15,10 @@ public class ThirdPlatformProduct {
     private String shopName;
     private String shopType;
     private String thirdPlatformItemId;
+    private String handle;
     private String title;
     private String description;
+    private String status;
     private String currency;
     private BigDecimal minPrice;
     private BigDecimal maxPrice;
@@ -23,6 +26,11 @@ public class ThirdPlatformProduct {
     private BigDecimal maxPriceLocal;
     private Double minWeightGrams;
     private Double maxWeightGrams;
+    private String primaryImageUrl;
+    private Instant updatedAt;
     private Integer delFlag;
+    /** In-memory only in P1 (no attribute relation table). */
     private List<ProductAttribute> productAttributeList = new ArrayList<>();
+    /** Carried within the product for single-transaction persistence. */
+    private List<ThirdPlatformProductMedia> mediaList = new ArrayList<>();
 }

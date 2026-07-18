@@ -2,43 +2,52 @@ package com.tang.plugin.service.order;
 
 import com.tang.plugin.domain.bo.PluginShopBO;
 import com.tang.plugin.domain.entity.order.ExternalOrder;
+import com.tang.plugin.domain.entity.order.ThirdPlatformOrder;
+import com.tang.plugin.repository.ThirdPlatformOrderRepository;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Skeleton outer-order service (idempotency lookup + draft save).
- * Replace with real DAO when DB is wired.
+ * Outer-order service: JDBC-persisted order header (idempotency lookup + draft save).
+ * Header idempotency key = (shop_type, shop_name, outer_order_id). Order lines persist via
+ * OrderLinePersistenceService within the caller's transaction.
  */
 @Slf4j
 @Service
 public class TOrderOuterService {
 
-    private final AtomicLong idSeq = new AtomicLong(1);
-    private final Map<String, Long> index = new ConcurrentHashMap<>();
+    @Resource
+    private ThirdPlatformOrderRepository thirdPlatformOrderRepository;
+    @Resource
+    private OrderLinePersistenceService orderLinePersistenceService;
 
     public List<Long> listOrderIdsByChannelOuterShopNameAndOuterOrderId(
             String channel, String shopName, String outerOrderId) {
-        String key = key(channel, shopName, outerOrderId);
-        Long id = index.get(key);
-        return id == null ? Collections.emptyList() : List.of(id);
+        return thirdPlatformOrderRepository.listIdsByKey(channel, shopName, outerOrderId);
     }
 
     public Long saveDraftOrderSkeleton(PluginShopBO shopBO, ExternalOrder externalOrder) {
-        String key = key(shopBO.getShopType().name(), shopBO.getShopName(), externalOrder.getOrderId());
-        Long id = idSeq.getAndIncrement();
-        index.put(key, id);
-        log.info("Saved skeleton draft order id={} shopName={} orderId={}",
-                id, shopBO.getShopName(), externalOrder.getOrderId());
-        return id;
-    }
+        String shopType = shopBO.getShopType() == null ? null : shopBO.getShopType().name();
+        ThirdPlatformOrder header = new ThirdPlatformOrder()
+                .setShopName(shopBO.getShopName())
+                .setShopType(shopType)
+                .setOuterOrderId(externalOrder.getOrderId())
+                .setOrderName(externalOrder.getOrderName())
+                .setFinancialStatus(externalOrder.getFinancialStatus())
+                .setFulfillmentStatus(externalOrder.getFulfillmentStatus())
+                .setCurrency(externalOrder.getCurrency())
+                .setTotalPrice(externalOrder.getTotalPrice())
+                .setPlatformCreatedAt(externalOrder.getCreatedAt())
+                .setPlatformUpdatedAt(externalOrder.getUpdatedAt())
+                .setDelFlag(0);
 
-    private static String key(String channel, String shopName, String outerOrderId) {
-        return channel + "|" + shopName + "|" + outerOrderId;
+        Long id = thirdPlatformOrderRepository.saveIfAbsent(header);
+        log.info("Saved draft order header id={} shopName={} orderId={}",
+                id, shopBO.getShopName(), externalOrder.getOrderId());
+        orderLinePersistenceService.persist(shopBO, externalOrder, id);
+        return id;
     }
 }

@@ -7,6 +7,7 @@ import com.tang.plugin.domain.bo.shopify.ShopifyEnabledShop;
 import com.tang.plugin.domain.dto.order.ExternalOrderSyncDTO;
 import com.tang.plugin.domain.entity.order.ExternalOrder;
 import com.tang.plugin.enums.PluginType;
+import com.tang.plugin.service.order.binding.OrderBindingResolver;
 import com.tang.plugin.service.order.external.adapter.ShopifyExternalOrderAdapter;
 import com.tang.plugin.service.order.external.component.ShopifyOrderComponent;
 import com.tang.plugin.service.order.external.strategy.BaseExternalOrderStrategy;
@@ -36,6 +37,8 @@ public class ShopifyOrderStrategyImpl
     private ShopifyExternalOrderAdapter shopifyExternalOrderAdapter;
     @Resource
     private ShopifyEnabledShopProvider shopifyEnabledShopProvider;
+    @Resource
+    private OrderBindingResolver orderBindingResolver;
 
     @Override
     public PluginType getPluginType() {
@@ -76,6 +79,7 @@ public class ShopifyOrderStrategyImpl
             try {
                 ExternalOrder externalOrder =
                         shopifyExternalOrderAdapter.convertToExternalOrder(orderNode, shopName);
+                orderBindingResolver.resolve(shopName, externalOrder);
                 upsertDraftOrderFromExternal(externalOrder, shopBO);
             } catch (Exception e) {
                 log.error("Shopify fetchExternalOrderByTimeRange error shopName={} orderId={}",
@@ -93,6 +97,7 @@ public class ShopifyOrderStrategyImpl
         }
         String shopName = shopBO.getShopName();
         String orderId = externalOrder.getOrderId();
+        orderBindingResolver.resolve(shopName, externalOrder);
         String lockKey = OrderBizUtils.operationLockKey(orderId);
         return redisManager.lockAround(lockKey, () -> {
             try {

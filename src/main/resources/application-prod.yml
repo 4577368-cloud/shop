@@ -1,0 +1,27 @@
+# Production / Render profile: activate with SPRING_PROFILES_ACTIVE=prod
+# Persistent PostgreSQL + internal token auth. Local (default) and test profiles are untouched.
+spring:
+  datasource:
+    # Prefer an explicit JDBC URL; otherwise build it from Render-provided DB parts.
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}
+    driver-class-name: org.postgresql.Driver
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+  # Reuse the same portable schema.sql; DDL is CREATE ... IF NOT EXISTS (idempotent).
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  h2:
+    console:
+      enabled: false
+
+tang:
+  plugin:
+    security:
+      internal-token:
+        enabled: true
+        token: ${TANG_PLUGIN_INTERNAL_TOKEN:}

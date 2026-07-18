@@ -13,7 +13,6 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -127,7 +126,7 @@ public class ShopifyStoreAuthRepository {
                     (shop_name, shop_domain, access_token, scope, status, authorized_at, updated_at, del_flag)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                     """,
-                    Statement.RETURN_GENERATED_KEYS);
+                    new String[]{"id"});
             ps.setString(1, auth.getShopName());
             ps.setString(2, auth.getShopDomain().toLowerCase());
             ps.setString(3, auth.getAccessToken());
