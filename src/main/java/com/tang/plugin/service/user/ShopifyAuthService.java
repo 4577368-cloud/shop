@@ -3,6 +3,8 @@ package com.tang.plugin.service.user;
 import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.config.ShopifyProperties;
+import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
+import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
 import com.tang.plugin.service.order.external.component.ShopifyAuthComponent;
 import com.tang.plugin.service.webhook.component.ShopifyWebhookComponent;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -31,6 +34,40 @@ public class ShopifyAuthService {
     private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ShopifyWebhookComponent shopifyWebhookComponent;
+    @Resource
+    private ThirdPlatformProductRepository thirdPlatformProductRepository;
+
+    /**
+     * Read-only auth status for a shop, used by the frontend to restore state after OAuth redirect.
+     * Returns only non-sensitive fields (never the access token). Unknown/invalid shops report
+     * {@code authorized=false} instead of failing.
+     */
+    public Map<String, Object> getShopStatus(String shop) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        String shopDomain = ShopifyGraphqlClient.normalizeDomain(shop);
+        if (StringUtils.isBlank(shopDomain) || !shopDomain.endsWith(".myshopify.com")) {
+            result.put("authorized", false);
+            result.put("shopDomain", shop);
+            result.put("status", "INVALID");
+            return result;
+        }
+        shopDomain = shopDomain.toLowerCase();
+        Optional<ShopifyStoreAuth> auth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain);
+        if (auth.isEmpty()) {
+            result.put("authorized", false);
+            result.put("shopDomain", shopDomain);
+            result.put("status", "NONE");
+            return result;
+        }
+        ShopifyStoreAuth a = auth.get();
+        result.put("authorized", true);
+        result.put("shopName", a.getShopName());
+        result.put("shopDomain", a.getShopDomain());
+        result.put("status", a.getStatus().name());
+        result.put("authorizedAt", a.getAuthorizedAt());
+        result.put("productCount", thirdPlatformProductRepository.countByShop(a.getShopName()));
+        return result;
+    }
 
     public String buildInstallUrl(String shop) {
         assertConfigured();

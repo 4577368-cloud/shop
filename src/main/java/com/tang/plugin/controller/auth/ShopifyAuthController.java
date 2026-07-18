@@ -1,6 +1,7 @@
 package com.tang.plugin.controller.auth;
 
 import com.tang.common.core.exception.CustomException;
+import com.tang.plugin.config.ShopifyProperties;
 import com.tang.plugin.service.user.ShopifyAuthService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -27,6 +29,8 @@ public class ShopifyAuthController {
 
     @Resource
     private ShopifyAuthService shopifyAuthService;
+    @Resource
+    private ShopifyProperties shopifyProperties;
 
     @GetMapping("/install")
     public ResponseEntity<Void> install(@RequestParam("shop") String shop) {
@@ -38,8 +42,13 @@ public class ShopifyAuthController {
                 .build();
     }
 
+    @GetMapping("/status")
+    public Map<String, Object> status(@RequestParam("shop") String shop) {
+        return shopifyAuthService.getShopStatus(shop);
+    }
+
     @GetMapping("/callback")
-    public Map<String, Object> callback(HttpServletRequest request) {
+    public ResponseEntity<Void> callback(HttpServletRequest request) {
         Map<String, String> params = extractQueryParams(request);
         log.info("Shopify auth callback shop={} queryString={} paramKeys={}",
                 params.get("shop"), request.getQueryString(), params.keySet());
@@ -50,7 +59,19 @@ public class ShopifyAuthController {
                             + "and ensure Partner App URL is not set to callback. "
                             + "queryString=" + request.getQueryString());
         }
-        return shopifyAuthService.handleCallback(params);
+        Map<String, Object> result = shopifyAuthService.handleCallback(params);
+        // On success redirect back to the frontend authorize page so the SPA can restore state
+        // (localStorage + /status). Failures still surface as JSON via the thrown exception above.
+        String shopDomain = String.valueOf(result.get("shopDomain"));
+        String base = StringUtils.removeEnd(
+                StringUtils.trimToEmpty(shopifyProperties.getFrontendBaseUrl()), "/");
+        String redirectUrl = base + "/authorize?shop="
+                + URLEncoder.encode(shopDomain, StandardCharsets.UTF_8);
+        log.info("Shopify auth callback success, redirecting to frontend shopDomain={}", shopDomain);
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(redirectUrl))
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .build();
     }
 
     private static Map<String, String> extractQueryParams(HttpServletRequest request) {

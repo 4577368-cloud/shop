@@ -34,6 +34,8 @@ tang:
       scopes: "read_orders,write_orders,read_products"
       redirect-uri: ${TANG_PLUGIN_SHOPIFY_REDIRECT_URI:http://localhost:8088/api/plugin/shopify/auth/callback}
       webhook-base-url: ${TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL:http://localhost:8088}
+      # Frontend base for post-OAuth redirect (set to the deployed frontend URL on Render).
+      frontend-base-url: ${TANG_PLUGIN_FRONTEND_BASE_URL:http://localhost:3000}
       polling:
         enabled: false
         fixed-delay-ms: 300000

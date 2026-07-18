@@ -22,6 +22,8 @@ public class ShopifyProperties {
     private String redirectUri = "http://localhost:8088/api/plugin/shopify/auth/callback";
     /** Public base for webhook callback, e.g. https://host */
     private String webhookBaseUrl = "http://localhost:8088";
+    /** Frontend base used to redirect back after a successful OAuth callback, e.g. https://app-host */
+    private String frontendBaseUrl = "http://localhost:3000";
 
     private Polling polling = new Polling();
     private Webhook webhook = new Webhook();
