@@ -58,4 +58,16 @@ public class ImageSearchController {
     public List<ImageBindingView> bindings(@RequestParam String shopName) {
         return imageMatchConfirmService.listActiveBindings(shopName);
     }
+
+    /** "确认无误": promote a product's PENDING (AI-suggested) image binding to ACTIVE. */
+    @PostMapping("/image-search/ack")
+    public void ack(@RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
+        imageMatchConfirmService.acknowledge(shopName, thirdPlatformItemId);
+    }
+
+    /** "取消关联": soft-unbind a product's image binding (PENDING or ACTIVE). */
+    @PostMapping("/image-search/unbind")
+    public void unbind(@RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
+        imageMatchConfirmService.unbind(shopName, thirdPlatformItemId);
+    }
 }

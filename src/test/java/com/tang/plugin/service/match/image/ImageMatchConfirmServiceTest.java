@@ -122,6 +122,34 @@ class ImageMatchConfirmServiceTest {
     }
 
     @Test
+    void autoConfirm_landsPending_thenAckPromotesToActive() {
+        seedProductWithVariant();
+
+        ImageBindingView view = service.confirm(dto("111", 0.9).setAuto(true));
+        assertEquals(BindingStatus.PENDING.name(), view.getBindStatus());
+
+        // PENDING is not an ACTIVE binding yet, but is surfaced for review (listActiveBindings).
+        assertTrue(bindingRepository.findActiveBySkuId(SHOP, VARIANT).isEmpty());
+        ShopProductBinding pending = bindingRepository.findBindableBySkuId(SHOP, VARIANT).orElseThrow();
+        assertEquals(BindingStatus.PENDING, pending.getBindStatus());
+        assertEquals(1, service.listActiveBindings(SHOP).size());
+
+        service.acknowledge(SHOP, ITEM);
+        ShopProductBinding confirmed = bindingRepository.findActiveBySkuId(SHOP, VARIANT).orElseThrow();
+        assertEquals(BindingStatus.ACTIVE, confirmed.getBindStatus());
+    }
+
+    @Test
+    void unbind_softDeletesBinding() {
+        seedProductWithVariant();
+        service.confirm(dto("111", 0.9)); // ACTIVE
+
+        service.unbind(SHOP, ITEM);
+        assertTrue(bindingRepository.findBindableBySkuId(SHOP, VARIANT).isEmpty());
+        assertTrue(service.listActiveBindings(SHOP).isEmpty());
+    }
+
+    @Test
     void nullSimilarity_storesZeroScore() {
         seedProductWithVariant();
         service.confirm(dto("111", null));

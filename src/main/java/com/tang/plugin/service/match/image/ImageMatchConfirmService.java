@@ -81,6 +81,8 @@ public class ImageMatchConfirmService {
         BigDecimal matchScore = toScore(dto.getSimilarityScore());
         String matchReason = ImageMatchReason.encode(
                 dto.getImageSource(), dto.getQuerySource(), dto.getAppliedQuery(), dto.getDetailUrl());
+        // Auto (scan-time) confirms land as PENDING for human review; explicit user confirms are ACTIVE.
+        BindingStatus targetStatus = dto.isAuto() ? BindingStatus.PENDING : BindingStatus.ACTIVE;
 
         ShopProductMatchCandidate candidate = new ShopProductMatchCandidate()
                 .setShopName(shopName)
@@ -107,27 +109,62 @@ public class ImageMatchConfirmService {
                     .setTangbuySkuId(tangbuySkuId)
                     .setBindSource(BIND_SOURCE_FROM_CANDIDATE)
                     .setCandidateId(candidateId)
-                    .setBindStatus(BindingStatus.ACTIVE);
-            shopProductBindingRepository.upsertActive(binding);
+                    .setBindStatus(targetStatus);
+            shopProductBindingRepository.upsert(binding, targetStatus);
             boolean rebind = oldTangbuySkuId != null && !oldTangbuySkuId.equals(tangbuySkuId);
-            log.info("ImageMatch {} shopName={} itemId={} variantGid={} tangbuySkuId: {} -> {} candidateId={} score={}",
-                    rebind ? "REBOUND" : "SET", shopName, itemId, variantGid,
+            log.info("ImageMatch {} status={} shopName={} itemId={} variantGid={} tangbuySkuId: {} -> {} candidateId={} score={}",
+                    rebind ? "REBOUND" : "SET", targetStatus, shopName, itemId, variantGid,
                     oldTangbuySkuId, tangbuySkuId, candidateId, matchScore);
         });
 
         return view(itemId, variantGid, tangbuyProductId, tangbuySkuId, matchScore,
-                ImageMatchReason.decode(matchReason));
+                ImageMatchReason.decode(matchReason), targetStatus);
     }
 
     /**
-     *回显: all ACTIVE image-search bindings of a shop, decoded for display. Read-only; empty is normal.
+     * "确认无误": promote the product's default-variant PENDING image binding to ACTIVE. Idempotent —
+     * a no-op when there is no PENDING binding (already confirmed).
+     *
+     * @throws CustomException prefixed with {@link #ERR_PRODUCT_NOT_FOUND} / {@link #ERR_NO_VARIANT}.
+     */
+    public void acknowledge(String shopName, String thirdPlatformItemId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) {
+            throw new CustomException("acknowledge requires shopName and thirdPlatformItemId");
+        }
+        requireProductExists(shopName, thirdPlatformItemId);
+        String variantGid = resolveDefaultVariantGid(shopName, thirdPlatformItemId);
+        int rows = shopProductBindingRepository.activateBySkuId(shopName, variantGid);
+        log.info("ImageMatch ACK shopName={} itemId={} variantGid={} rows={}",
+                shopName, thirdPlatformItemId, variantGid, rows);
+    }
+
+    /**
+     * "取消关联": soft-unbind the product's default-variant binding (PENDING or ACTIVE). Idempotent.
+     *
+     * @throws CustomException prefixed with {@link #ERR_PRODUCT_NOT_FOUND} / {@link #ERR_NO_VARIANT}.
+     */
+    public void unbind(String shopName, String thirdPlatformItemId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) {
+            throw new CustomException("unbind requires shopName and thirdPlatformItemId");
+        }
+        requireProductExists(shopName, thirdPlatformItemId);
+        String variantGid = resolveDefaultVariantGid(shopName, thirdPlatformItemId);
+        int rows = shopProductBindingRepository.deactivateBySkuId(shopName, variantGid);
+        log.info("ImageMatch UNBIND shopName={} itemId={} variantGid={} rows={}",
+                shopName, thirdPlatformItemId, variantGid, rows);
+    }
+
+    /**
+     *回显: all live image-search bindings of a shop (ACTIVE + PENDING), decoded for display. Read-only;
+     * empty is normal. Each view carries {@code bindStatus} so the UI can separate AI-suggested
+     * (PENDING) from confirmed (ACTIVE) bindings.
      */
     public List<ImageBindingView> listActiveBindings(String shopName) {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("listActiveBindings requires shopName");
         }
         List<ImageBindingView> views = new ArrayList<>();
-        for (ShopProductBinding binding : shopProductBindingRepository.listActiveByShop(shopName)) {
+        for (ShopProductBinding binding : shopProductBindingRepository.listBindableByShop(shopName)) {
             BigDecimal score = null;
             ImageMatchReason.Decoded reason = ImageMatchReason.decode(null);
             if (binding.getCandidateId() != null) {
@@ -140,7 +177,7 @@ public class ImageMatchConfirmService {
             }
             views.add(view(binding.getThirdPlatformItemId(),
                     binding.getThirdPlatformSkuId(), binding.getTangbuyProductId(), binding.getTangbuySkuId(),
-                    score, reason));
+                    score, reason, binding.getBindStatus()));
         }
         return views;
     }
@@ -164,7 +201,7 @@ public class ImageMatchConfirmService {
     }
 
     private String currentBoundTangbuySkuId(String shopName, String variantGid) {
-        return shopProductBindingRepository.findActiveBySkuId(shopName, variantGid)
+        return shopProductBindingRepository.findBindableBySkuId(shopName, variantGid)
                 .map(ShopProductBinding::getTangbuySkuId)
                 .orElse(null);
     }
@@ -179,7 +216,7 @@ public class ImageMatchConfirmService {
 
     private static ImageBindingView view(String itemId, String variantGid,
                                          String tangbuyProductId, String tangbuySkuId, BigDecimal score,
-                                         ImageMatchReason.Decoded reason) {
+                                         ImageMatchReason.Decoded reason, BindingStatus status) {
         return new ImageBindingView()
                 .setBound(true)
                 .setThirdPlatformItemId(itemId)
@@ -187,6 +224,7 @@ public class ImageMatchConfirmService {
                 .setTangbuyProductId(tangbuyProductId)
                 .setTangbuySkuId(tangbuySkuId)
                 .setMatchScore(score)
+                .setBindStatus(status == null ? null : status.name())
                 .setImageSource(reason.imageSource())
                 .setQuerySource(reason.querySource())
                 .setAppliedQuery(reason.appliedQuery())

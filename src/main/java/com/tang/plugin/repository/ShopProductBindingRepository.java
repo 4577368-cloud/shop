@@ -69,21 +69,32 @@ public class ShopProductBindingRepository {
     }
 
     /**
-     * List all ACTIVE bindings of a shop (del_flag = 0). Read-only; used by A3-2b to回显 bound state
-     * for the whole product list in one query.
+     * A live binding of a SKU regardless of confirmation: ACTIVE (confirmed) or PENDING (AI-suggested),
+     * del_flag = 0. Used by UI-facing resolves (rebind detection, offer resolution) that must also see
+     * unconfirmed suggestions; order/publish routing keeps using {@link #findActiveBySkuId}.
      */
-    public List<ShopProductBinding> listActiveByShop(String shopName) {
+    public Optional<ShopProductBinding> findBindableBySkuId(String shopName, String thirdPlatformSkuId) {
+        return findBySkuId(shopName, thirdPlatformSkuId)
+                .filter(b -> b.getDelFlag() != null && b.getDelFlag() == 0)
+                .filter(b -> b.getBindStatus() == BindingStatus.ACTIVE || b.getBindStatus() == BindingStatus.PENDING);
+    }
+
+    /**
+     * List all live bindings of a shop (ACTIVE + PENDING, del_flag = 0). Read-only; used to回显 bound
+     * state (including AI-suggested rows awaiting confirmation) for the whole product list in one query.
+     */
+    public List<ShopProductBinding> listBindableByShop(String shopName) {
         if (StringUtils.isBlank(shopName)) {
             return List.of();
         }
         return jdbcTemplate.query(
                 "SELECT " + COLUMNS + " FROM shop_product_binding "
-                        + "WHERE shop_name = ? AND bind_status = ? AND del_flag = 0 ORDER BY id DESC",
-                ROW_MAPPER, shopName, BindingStatus.ACTIVE.name());
+                        + "WHERE shop_name = ? AND bind_status IN (?, ?) AND del_flag = 0 ORDER BY id DESC",
+                ROW_MAPPER, shopName, BindingStatus.ACTIVE.name(), BindingStatus.PENDING.name());
     }
 
     /**
-     * Deactivate the current ACTIVE binding of a SKU (soft). Returns affected rows.
+     * Deactivate the current live binding of a SKU (soft), whether ACTIVE or PENDING. Returns affected rows.
      */
     public int deactivateBySkuId(String shopName, String thirdPlatformSkuId) {
         if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
@@ -93,22 +104,53 @@ public class ShopProductBindingRepository {
                 """
                 UPDATE shop_product_binding
                 SET bind_status = ?, del_flag = 1, updated_at = ?
-                WHERE shop_name = ? AND third_platform_sku_id = ? AND bind_status = ?
+                WHERE shop_name = ? AND third_platform_sku_id = ? AND bind_status IN (?, ?)
                 """,
                 BindingStatus.INACTIVE.name(),
                 Timestamp.from(Instant.now()),
                 shopName,
                 thirdPlatformSkuId,
-                BindingStatus.ACTIVE.name());
+                BindingStatus.ACTIVE.name(),
+                BindingStatus.PENDING.name());
         log.info("Binding deactivated shopName={} thirdPlatformSkuId={} rows={}",
                 shopName, thirdPlatformSkuId, rows);
         return rows;
     }
 
     /**
-     * Write an ACTIVE binding for the SKU. Updates the single anchored row if present, else inserts.
+     * Promote the SKU's PENDING binding to ACTIVE ("确认无误"). Returns affected rows (0 when there is
+     * no live PENDING binding, e.g. already confirmed).
      */
+    public int activateBySkuId(String shopName, String thirdPlatformSkuId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
+            return 0;
+        }
+        int rows = jdbcTemplate.update(
+                """
+                UPDATE shop_product_binding
+                SET bind_status = ?, del_flag = 0, updated_at = ?
+                WHERE shop_name = ? AND third_platform_sku_id = ? AND bind_status = ? AND del_flag = 0
+                """,
+                BindingStatus.ACTIVE.name(),
+                Timestamp.from(Instant.now()),
+                shopName,
+                thirdPlatformSkuId,
+                BindingStatus.PENDING.name());
+        log.info("Binding confirmed shopName={} thirdPlatformSkuId={} rows={}",
+                shopName, thirdPlatformSkuId, rows);
+        return rows;
+    }
+
+    /** Write an ACTIVE binding for the SKU. Updates the single anchored row if present, else inserts. */
     public void upsertActive(ShopProductBinding binding) {
+        upsert(binding, BindingStatus.ACTIVE);
+    }
+
+    /**
+     * Write a binding for the SKU with the given live status (ACTIVE for confirmed, PENDING for
+     * AI-suggested). Updates the single anchored row if present, else inserts.
+     */
+    public void upsert(ShopProductBinding binding, BindingStatus status) {
         Instant now = Instant.now();
         Optional<ShopProductBinding> existing = findBySkuId(binding.getShopName(), binding.getThirdPlatformSkuId());
         if (existing.isPresent()) {
@@ -126,12 +168,12 @@ public class ShopProductBindingRepository {
                     binding.getTangbuySkuId(),
                     binding.getBindSource(),
                     binding.getCandidateId(),
-                    BindingStatus.ACTIVE.name(),
+                    status.name(),
                     Timestamp.from(now),
                     id);
             binding.setId(id);
-            log.info("Binding activated (update) id={} shopName={} thirdPlatformSkuId={}",
-                    id, binding.getShopName(), binding.getThirdPlatformSkuId());
+            log.info("Binding upsert (update) id={} status={} shopName={} thirdPlatformSkuId={}",
+                    id, status, binding.getShopName(), binding.getThirdPlatformSkuId());
             return;
         }
         jdbcTemplate.update(
@@ -149,11 +191,11 @@ public class ShopProductBindingRepository {
                 binding.getTangbuySkuId(),
                 binding.getBindSource(),
                 binding.getCandidateId(),
-                BindingStatus.ACTIVE.name(),
+                status.name(),
                 Timestamp.from(now),
                 Timestamp.from(now));
-        log.info("Binding activated (insert) shopName={} thirdPlatformSkuId={}",
-                binding.getShopName(), binding.getThirdPlatformSkuId());
+        log.info("Binding upsert (insert) status={} shopName={} thirdPlatformSkuId={}",
+                status, binding.getShopName(), binding.getThirdPlatformSkuId());
     }
 
     private static Instant toInstant(Timestamp ts) {

@@ -115,6 +115,24 @@ public class SkuAutoAlignService {
                 .setItems(items);
     }
 
+    /** "确认无误": promote a single variant's PENDING binding to ACTIVE. Idempotent. */
+    public void acknowledge(String shopName, String thirdPlatformSkuId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
+            throw new CustomException("acknowledge requires shopName and thirdPlatformSkuId");
+        }
+        int rows = shopProductBindingRepository.activateBySkuId(shopName, thirdPlatformSkuId);
+        log.info("SkuBinding ACK shopName={} thirdPlatformSkuId={} rows={}", shopName, thirdPlatformSkuId, rows);
+    }
+
+    /** "取消关联": soft-unbind a single variant's binding (PENDING or ACTIVE). Idempotent. */
+    public void unbind(String shopName, String thirdPlatformSkuId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
+            throw new CustomException("unbind requires shopName and thirdPlatformSkuId");
+        }
+        int rows = shopProductBindingRepository.deactivateBySkuId(shopName, thirdPlatformSkuId);
+        log.info("SkuBinding UNBIND shopName={} thirdPlatformSkuId={} rows={}", shopName, thirdPlatformSkuId, rows);
+    }
+
     private void persist(String shopName, String itemId, String offerId, VariantAlignment a, String detailUrl) {
         String reason = SkuMatchReason.encode(ALGO_RULE, a.score(), a.skuId(), a.specLabel(), detailUrl);
         ShopProductMatchCandidate candidate = new ShopProductMatchCandidate()
@@ -139,13 +157,14 @@ public class SkuAutoAlignService {
                 .setTangbuySkuId(a.skuId())
                 .setBindSource(BIND_SOURCE_AUTO)
                 .setCandidateId(candidateId)
-                .setBindStatus(BindingStatus.ACTIVE);
-        shopProductBindingRepository.upsertActive(binding);
+                .setBindStatus(BindingStatus.PENDING);
+        // Auto-aligned variants are AI-suggested: land as PENDING for human confirmation on /sku-align.
+        shopProductBindingRepository.upsert(binding, BindingStatus.PENDING);
     }
 
-    /** The offer bound to any variant of this product (A3-2b product-level binding). */
+    /** The offer bound to any variant of this product (A3-2b product-level binding; PENDING or ACTIVE). */
     private String resolveBoundOffer(String shopName, String itemId) {
-        return shopProductBindingRepository.listActiveByShop(shopName).stream()
+        return shopProductBindingRepository.listBindableByShop(shopName).stream()
                 .filter(b -> itemId.equals(b.getThirdPlatformItemId()))
                 .map(ShopProductBinding::getTangbuyProductId)
                 .filter(StringUtils::isNotBlank)

@@ -51,7 +51,7 @@ public class SkuBindingOverviewService {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("overview requires shopName");
         }
-        List<ShopProductBinding> bindings = shopProductBindingRepository.listActiveByShop(shopName);
+        List<ShopProductBinding> bindings = shopProductBindingRepository.listBindableByShop(shopName);
         if (bindings.isEmpty()) {
             return List.of();
         }
@@ -118,7 +118,8 @@ public class SkuBindingOverviewService {
                 .setBindingId(binding.getId())
                 .setCandidateId(binding.getCandidateId())
                 .setTangbuyProductId(binding.getTangbuyProductId())
-                .setTangbuySkuId(binding.getTangbuySkuId());
+                .setTangbuySkuId(binding.getTangbuySkuId())
+                .setBindStatus(binding.getBindStatus() == null ? null : binding.getBindStatus().name());
         if (binding.getCandidateId() != null) {
             ShopProductMatchCandidate candidate = candidateCache.computeIfAbsent(
                     binding.getCandidateId(),

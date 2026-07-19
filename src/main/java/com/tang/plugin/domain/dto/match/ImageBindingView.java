@@ -20,6 +20,8 @@ public class ImageBindingView {
     private String tangbuyProductId;
     private String tangbuySkuId;
     private BigDecimal matchScore;
+    /** PENDING = AI-suggested, awaiting confirmation; ACTIVE = confirmed. Null only for legacy rows. */
+    private String bindStatus;
     private String imageSource;
     private String querySource;
     private String appliedQuery;

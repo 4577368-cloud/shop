@@ -49,6 +49,18 @@ public class SkuBindingController {
         return skuAutoAlignService.autoAlign(shopName, thirdPlatformItemId, offerId);
     }
 
+    /** "确认无误": promote a single variant's PENDING (AI-suggested) binding to ACTIVE. */
+    @PostMapping("/ack")
+    public void ack(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+        skuAutoAlignService.acknowledge(shopName, thirdPlatformSkuId);
+    }
+
+    /** "取消关联": soft-unbind a single variant's binding (PENDING or ACTIVE). */
+    @PostMapping("/unbind")
+    public void unbind(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+        skuAutoAlignService.unbind(shopName, thirdPlatformSkuId);
+    }
+
     /**
      * S1-b0 preview: fetch a 1688 offer's normalized SKU matrix. Read-only; used to verify the
      * cross-border AOP integration before S1-b1 auto-alignment. No persistence.

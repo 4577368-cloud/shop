@@ -18,6 +18,8 @@ public class SkuVariantBindingVO {
     private Long candidateId;
     private String tangbuyProductId;
     private String tangbuySkuId;
+    /** PENDING = AI-suggested, awaiting confirmation; ACTIVE = confirmed. Null only for legacy rows. */
+    private String bindStatus;
     /** Matched 1688 spec label for RULE/AI (auto-aligned) bindings, e.g. "Red / M"; null for IMAGE. */
     private String tangbuySkuSpec;
     /** How the binding was established: IMAGE (A3-2b) or RULE/AI (S1-b1 auto-align). */
