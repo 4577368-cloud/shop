@@ -67,6 +67,39 @@ public class ThirdPlatformSkuRepository {
     }
 
     /**
+     * All active variants of a product, ordered by {@code position} ascending (S1-a SKU overview).
+     */
+    public List<ThirdPlatformSku> listByItem(String shopName, String itemId) {
+        if (StringUtils.isAnyBlank(shopName, itemId)) {
+            return List.of();
+        }
+        return jdbcTemplate.query(
+                "SELECT " + COLUMNS + " FROM third_platform_sku "
+                        + "WHERE shop_name = ? AND third_platform_item_id = ? AND del_flag = 0 "
+                        + "ORDER BY position ASC NULLS LAST, id ASC",
+                ROW_MAPPER, shopName, itemId);
+    }
+
+    /**
+     * Resolve the owning product item id of a variant (by variant GID). Used to group legacy bindings
+     * whose {@code third_platform_item_id} was not recorded. Empty when the variant is not mirrored.
+     */
+    public Optional<String> findItemIdBySkuId(String shopName, String thirdPlatformSkuId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(jdbcTemplate.queryForObject(
+                    "SELECT third_platform_item_id FROM third_platform_sku "
+                            + "WHERE shop_name = ? AND third_platform_sku_id = ? AND del_flag = 0 "
+                            + "FETCH FIRST 1 ROW ONLY",
+                    String.class, shopName, thirdPlatformSkuId));
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Soft-delete all SKUs of a product so a re-sync can reactivate only current ones.
      */
     public int softDeleteByItem(String shopName, String itemId) {
