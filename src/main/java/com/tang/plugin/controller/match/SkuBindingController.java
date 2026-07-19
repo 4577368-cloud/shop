@@ -1,12 +1,15 @@
 package com.tang.plugin.controller.match;
 
+import com.tang.plugin.domain.dto.match.SkuAutoAlignResultVO;
 import com.tang.plugin.domain.dto.match.SkuProductOverviewVO;
 import com.tang.plugin.domain.dto.match.sku.OfferDetailVO;
 import com.tang.plugin.service.match.SkuBindingOverviewService;
 import com.tang.plugin.service.match.sku.Crossborder1688ProductClient;
+import com.tang.plugin.service.match.sku.SkuAutoAlignService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,11 +29,24 @@ public class SkuBindingController {
     @Resource
     private SkuBindingOverviewService skuBindingOverviewService;
     @Resource
+    private SkuAutoAlignService skuAutoAlignService;
+    @Resource
     private Crossborder1688ProductClient crossborder1688ProductClient;
 
     @GetMapping("/overview")
     public List<SkuProductOverviewVO> overview(@RequestParam String shopName) {
         return skuBindingOverviewService.overview(shopName);
+    }
+
+    /**
+     * S1-b1: auto-align a bound product's Shopify variants to the 1688 offer's SKU matrix, writing
+     * per-variant RULE bindings. {@code offerId} is optional (resolved from the product-level binding).
+     */
+    @PostMapping("/auto-align")
+    public SkuAutoAlignResultVO autoAlign(@RequestParam String shopName,
+                                          @RequestParam String thirdPlatformItemId,
+                                          @RequestParam(required = false) String offerId) {
+        return skuAutoAlignService.autoAlign(shopName, thirdPlatformItemId, offerId);
     }
 
     /**

@@ -11,7 +11,7 @@ import java.util.TreeMap;
 
 /**
  * Pure, side-effect-free signer for the 1688 open platform (AOP {@code param2} protocol,
- * {@code gw.open.1688.com}). Distinct from the Newton skills-gateway AK scheme used by image search.
+ * {@code gw.open.1688.com}); shared by the cross-border image-search, image-upload and offer-detail clients.
  *
  * <p>Signature factor = {@code apiPath} + every request parameter (excluding {@code _aop_signature})
  * concatenated in ascending key order as {@code key + value} with no separators. The signature is

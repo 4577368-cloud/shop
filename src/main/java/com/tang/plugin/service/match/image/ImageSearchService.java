@@ -34,9 +34,8 @@ import java.util.List;
  * Any LLM failure/timeout returns null and degrades to the title (possibly empty) or pure-image
  * result — the chain is never interrupted. Read-only; no persistence, no binding (that is A3-2b).
  *
- * <p>Since A3-3b the gateway is the official cross-border image search
- * ({@link Alibaba1688ImageSearchClient}, AOP) instead of Newton {@code find_product}: the correction
- * query maps to the native {@code keyword}. Because the official API accepts a publicly-reachable
+ * <p>The gateway is the official 1688 cross-border image search ({@link Alibaba1688ImageSearchClient}, AOP):
+ * the correction query maps to the native {@code keyword}. Because the official API accepts a publicly-reachable
  * {@code imageAddress} only for alicdn-hosted images, a non-alicdn (e.g. Shopify-CDN) image is first
  * uploaded via {@link Alibaba1688ImageUploadClient} to obtain an {@code imageId}, resolved once per call
  * and reused across the title/LLM tiers.

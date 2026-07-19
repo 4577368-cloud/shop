@@ -8,11 +8,13 @@ import com.tang.plugin.domain.entity.match.ShopProductBinding;
 import com.tang.plugin.domain.entity.match.ShopProductMatchCandidate;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
 import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
+import com.tang.plugin.enums.match.MatchSource;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.match.image.ImageMatchReason;
+import com.tang.plugin.service.match.sku.SkuMatchReason;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -122,14 +124,29 @@ public class SkuBindingOverviewService {
                     binding.getCandidateId(),
                     id -> shopProductMatchCandidateRepository.findById(id).orElse(null));
             if (candidate != null) {
-                ImageMatchReason.Decoded reason = ImageMatchReason.decode(candidate.getMatchReason());
                 vo.setMatchScore(candidate.getMatchScore())
-                        .setQuerySource(reason.querySource())
-                        .setAppliedQuery(reason.appliedQuery())
-                        .setDetailUrl(reason.detailUrl());
+                        .setMatchSource(candidate.getMatchSource() == null ? null : candidate.getMatchSource().name());
+                decodeReason(vo, candidate);
             }
         }
         return vo;
+    }
+
+    /**
+     * Decode the candidate's structured audit reason by source: IMAGE (A3-2b) carries querySource/
+     * appliedQuery/detailUrl; RULE/AI (S1-b1 auto-align) carries the matched spec + detailUrl.
+     */
+    private void decodeReason(SkuVariantBindingVO vo, ShopProductMatchCandidate candidate) {
+        if (candidate.getMatchSource() == MatchSource.IMAGE) {
+            ImageMatchReason.Decoded reason = ImageMatchReason.decode(candidate.getMatchReason());
+            vo.setQuerySource(reason.querySource())
+                    .setAppliedQuery(reason.appliedQuery())
+                    .setDetailUrl(reason.detailUrl());
+        } else {
+            SkuMatchReason.Decoded reason = SkuMatchReason.decode(candidate.getMatchReason());
+            vo.setTangbuySkuSpec(reason.specLabel())
+                    .setDetailUrl(reason.detailUrl());
+        }
     }
 
     /** Non-blank spec name: join present options, else fall back to sku, else a generic label. */
