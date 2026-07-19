@@ -4,6 +4,8 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.match.image.ImageSearchProductVO;
 import com.tang.plugin.domain.dto.match.image.ImageSearchResultVO;
 import com.tang.plugin.domain.dto.match.image.ImageSource;
+import com.tang.plugin.domain.dto.match.image.OfferImageSearchItemVO;
+import com.tang.plugin.domain.dto.match.image.OfferImageSearchResultVO;
 import com.tang.plugin.domain.dto.match.image.QuerySource;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
@@ -13,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -30,6 +33,13 @@ import java.util.List;
  *
  * Any LLM failure/timeout returns null and degrades to the title (possibly empty) or pure-image
  * result — the chain is never interrupted. Read-only; no persistence, no binding (that is A3-2b).
+ *
+ * <p>Since A3-3b the gateway is the official cross-border image search
+ * ({@link Alibaba1688ImageSearchClient}, AOP) instead of Newton {@code find_product}: the correction
+ * query maps to the native {@code keyword}. Because the official API accepts a publicly-reachable
+ * {@code imageAddress} only for alicdn-hosted images, a non-alicdn (e.g. Shopify-CDN) image is first
+ * uploaded via {@link Alibaba1688ImageUploadClient} to obtain an {@code imageId}, resolved once per call
+ * and reused across the title/LLM tiers.
  */
 @Slf4j
 @Service
@@ -38,10 +48,15 @@ public class ImageSearchService {
     public static final String ERR_NO_PRIMARY_IMAGE = "NO_PRIMARY_IMAGE";
     public static final String ERR_PRODUCT_NOT_FOUND = "PRODUCT_NOT_FOUND";
 
+    /** Multilingual translation language for the official {@code *Trans} fields. */
+    private static final String SEARCH_COUNTRY = "en";
+
     @Resource
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
     @Resource
-    private Newton1688ImageSearchClient newton1688ImageSearchClient;
+    private Alibaba1688ImageSearchClient imageSearchClient;
+    @Resource
+    private Alibaba1688ImageUploadClient imageUploadClient;
     @Resource
     private SearchImageResolver searchImageResolver;
     @Resource
@@ -52,7 +67,7 @@ public class ImageSearchService {
      *
      * @param shopName            shop identifier
      * @param thirdPlatformItemId the mirrored SPU id (Shopify product GID in the mirror)
-     * @param limit               candidates to fetch (null/&lt;=0 → client default 4)
+     * @param limit               candidates to fetch (null/&lt;=0 → client default)
      */
     public ImageSearchResultVO searchByShopProduct(String shopName, String thirdPlatformItemId, Integer limit) {
         if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) {
@@ -60,24 +75,25 @@ public class ImageSearchService {
         }
         ThirdPlatformProduct product = findMirrorProduct(shopName, thirdPlatformItemId);
 
-        // Tier 1: original source image (no query, no LLM).
+        // Tier 1: original source image (no query, no LLM). Catalog images are alicdn-hosted.
         String originalImage = searchImageResolver.resolveOriginalImageUrl(shopName, thirdPlatformItemId);
         if (StringUtils.isNotBlank(originalImage)) {
-            List<ImageSearchProductVO> items = newton1688ImageSearchClient.search(originalImage, limit, null);
+            List<ImageSearchProductVO> items = search(resolveToken(originalImage), limit, null);
             return result(items, ImageSource.ORIGINAL, QuerySource.NONE, null);
         }
 
-        // Shopify image path (tiers 2/3).
+        // Shopify image path (tiers 2/3). Resolve the search token (upload → imageId when not alicdn) once.
         String shopifyImage = product.getPrimaryImageUrl();
         if (StringUtils.isBlank(shopifyImage)) {
             throw new CustomException(ERR_NO_PRIMARY_IMAGE + ": 该商品无主图，无法进行 1688 图搜");
         }
+        SearchToken token = resolveToken(shopifyImage);
 
         // Tier 2: title query, when usable.
         QueryPlan titlePlan = searchImageResolver.titleQueryPlan(product.getTitle());
         List<ImageSearchProductVO> titleItems = null;
         if (titlePlan != null) {
-            titleItems = newton1688ImageSearchClient.search(shopifyImage, limit, titlePlan.retrievalValue());
+            titleItems = search(token, limit, titlePlan.retrievalValue());
             if (!titleItems.isEmpty()) {
                 return result(titleItems, ImageSource.SHOPIFY, QuerySource.TITLE, titlePlan.displayValue());
             }
@@ -87,7 +103,7 @@ public class ImageSearchService {
         // Tier 3: LLM subject query (title unusable, or its recall was empty).
         String subject = llmVisionClient.describeSubject(shopifyImage);
         if (StringUtils.isNotBlank(subject)) {
-            List<ImageSearchProductVO> llmItems = newton1688ImageSearchClient.search(shopifyImage, limit, subject);
+            List<ImageSearchProductVO> llmItems = search(token, limit, subject);
             return result(llmItems, ImageSource.SHOPIFY, QuerySource.LLM, subject);
         }
 
@@ -95,8 +111,26 @@ public class ImageSearchService {
         if (titlePlan != null) {
             return result(titleItems, ImageSource.SHOPIFY, QuerySource.TITLE, titlePlan.displayValue());
         }
-        List<ImageSearchProductVO> pureItems = newton1688ImageSearchClient.search(shopifyImage, limit, null);
+        List<ImageSearchProductVO> pureItems = search(token, limit, null);
         return result(pureItems, ImageSource.SHOPIFY, QuerySource.NONE, null);
+    }
+
+    /**
+     * Decide how the official image search should reference the image: pass an alicdn-hosted url directly
+     * as {@code imageAddress}, otherwise upload it once to obtain an {@code imageId} the gateway accepts.
+     */
+    private SearchToken resolveToken(String imageUrl) {
+        if (isAlicdn(imageUrl)) {
+            return SearchToken.address(imageUrl);
+        }
+        String imageId = imageUploadClient.uploadByUrl(imageUrl).getImageId();
+        return SearchToken.id(imageId);
+    }
+
+    private List<ImageSearchProductVO> search(SearchToken token, Integer limit, String keyword) {
+        OfferImageSearchResultVO res = imageSearchClient.searchByImage(
+                token.imageAddress(), token.imageId(), keyword, null, SEARCH_COUNTRY, 1, limit);
+        return map(res.getItems());
     }
 
     private ThirdPlatformProduct findMirrorProduct(String shopName, String thirdPlatformItemId) {
@@ -107,6 +141,34 @@ public class ImageSearchService {
                         + ": 未找到店铺商品(" + shopName + "/" + thirdPlatformItemId + ")，请先同步商品"));
     }
 
+    /** Map official offers to the stable normalized item shape. Gateway relevance order is preserved. */
+    private static List<ImageSearchProductVO> map(List<OfferImageSearchItemVO> offers) {
+        List<ImageSearchProductVO> items = new ArrayList<>();
+        if (offers == null) {
+            return items;
+        }
+        for (OfferImageSearchItemVO o : offers) {
+            items.add(new ImageSearchProductVO()
+                    .setProductId(StringUtils.defaultString(o.getOfferId()))
+                    .setTitle(StringUtils.trimToEmpty(StringUtils.firstNonBlank(o.getSubjectTrans(), o.getSubject())))
+                    .setImageUrl(o.getImageUrl())
+                    .setDetailUrl(o.getDetailUrl())
+                    .setPrice(o.getPrice())
+                    .setSupplier(o.getCompanyName())
+                    .setSoldCount(o.getMonthSold() == null ? null : o.getMonthSold().longValue())
+                    .setRepurchaseRate(o.getRepurchaseRate())
+                    .setSimilarityScore(null)
+                    .setMinOrderQty(o.getMinOrderQuantity() == null ? null : o.getMinOrderQuantity().longValue())
+                    .setInventory(null)
+                    .setSkuId(null));
+        }
+        return items;
+    }
+
+    private static boolean isAlicdn(String url) {
+        return StringUtils.containsIgnoreCase(url, "alicdn.com");
+    }
+
     private static ImageSearchResultVO result(List<ImageSearchProductVO> items, ImageSource imageSource,
                                               QuerySource querySource, String appliedQuery) {
         return new ImageSearchResultVO()
@@ -114,5 +176,16 @@ public class ImageSearchService {
                 .setImageSource(imageSource.name())
                 .setQuerySource(querySource.name())
                 .setAppliedQuery(appliedQuery);
+    }
+
+    /** Either a direct {@code imageAddress} (alicdn) or an uploaded {@code imageId}; exactly one is set. */
+    private record SearchToken(String imageAddress, String imageId) {
+        static SearchToken address(String imageAddress) {
+            return new SearchToken(imageAddress, null);
+        }
+
+        static SearchToken id(String imageId) {
+            return new SearchToken(null, imageId);
+        }
     }
 }

@@ -24,6 +24,8 @@ public class OfferImageSearchItemVO {
     private Integer minOrderQuantity;
     private Integer monthSold;
     private String repurchaseRate;
+    /** Supplier company name (gateway {@code companyName}). */
+    private String companyName;
     /** Direct, openable offer link (gateway {@code promotionURL}). */
     private String detailUrl;
 }

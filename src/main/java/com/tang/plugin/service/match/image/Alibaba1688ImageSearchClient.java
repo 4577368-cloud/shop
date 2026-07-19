@@ -196,6 +196,7 @@ public class Alibaba1688ImageSearchClient {
                     .setMinOrderQuantity(o.getInteger("minOrderQuantity"))
                     .setMonthSold(o.getInteger("monthSold"))
                     .setRepurchaseRate(o.getString("repurchaseRate"))
+                    .setCompanyName(o.getString("companyName"))
                     .setDetailUrl(o.getString("promotionURL"));
             JSONObject price = o.getJSONObject("priceInfo");
             if (price != null) {
