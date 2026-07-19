@@ -112,6 +112,18 @@ public class ProductPublishRecordRepository {
         }
     }
 
+    /** Count PUBLISHED (successfully listed) records for a shop — the "已刊登" metric. Zero when blank/none. */
+    public int countPublishedByShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return 0;
+        }
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM product_publish_record "
+                        + "WHERE shop_name = ? AND publish_status = ? AND del_flag = 0",
+                Integer.class, shopName, ProductPublishStatus.PUBLISHED.name());
+        return count == null ? 0 : count;
+    }
+
     public List<ProductPublishRecord> listByShop(String shopName) {
         if (StringUtils.isBlank(shopName)) {
             return Collections.emptyList();

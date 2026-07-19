@@ -60,6 +60,11 @@ public class ProductPublishRecordService {
         }
     }
 
+    /** Count successfully published (listed) products for a shop — the "已刊登" metric. */
+    public int countPublished(String shopName) {
+        return productPublishRecordRepository.countPublishedByShop(shopName);
+    }
+
     /**
      * Mark a real publish attempt as starting: PENDING/FAILED -> PUBLISHING, attempts += 1.
      * @return true if the transition applied; false when the row is already PUBLISHING/PUBLISHED.

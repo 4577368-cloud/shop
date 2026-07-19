@@ -26,4 +26,8 @@ public class ImageBindingView {
     private String querySource;
     private String appliedQuery;
     private String detailUrl;
+    /** Snapshot of the matched candidate's image url (from the confirm), used for回显 without a detail re-query. */
+    private String offerImageUrl;
+    /** Snapshot of the matched candidate's price string (gateway raw), used for回显. */
+    private String offerPrice;
 }

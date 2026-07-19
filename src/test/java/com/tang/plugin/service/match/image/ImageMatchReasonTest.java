@@ -25,12 +25,36 @@ class ImageMatchReasonTest {
     @Test
     void fixedKeyOrderAndDefaults() {
         String reason = ImageMatchReason.encode("ORIGINAL", null, null, null);
-        assertTrue(reason.startsWith("img=ORIGINAL|qs=NONE|q=|url="), reason);
+        assertTrue(reason.startsWith("img=ORIGINAL|qs=NONE|q=|pic=|price=|url="), reason);
         ImageMatchReason.Decoded d = ImageMatchReason.decode(reason);
         assertEquals("ORIGINAL", d.imageSource());
         assertEquals("NONE", d.querySource());
         assertNull(d.appliedQuery());
         assertNull(d.detailUrl());
+        assertNull(d.imageUrl());
+        assertNull(d.price());
+    }
+
+    @Test
+    void snapshotImageAndPriceRoundTrip() {
+        String reason = ImageMatchReason.encode("SHOPIFY", "TITLE", "礼盒",
+                "https://detail.1688.com/offer/1.html",
+                "https://cbu01.alicdn.com/img/ibank/x.jpg", "12.00");
+        ImageMatchReason.Decoded d = ImageMatchReason.decode(reason);
+        assertEquals("https://cbu01.alicdn.com/img/ibank/x.jpg", d.imageUrl());
+        assertEquals("12.00", d.price());
+        assertEquals("https://detail.1688.com/offer/1.html", d.detailUrl());
+    }
+
+    @Test
+    void urlQueryParamsPreserveEquals() {
+        // Regression: previously '=' in the url was replaced with a space, corrupting detail links.
+        String url = "https://detail.1688.com/offer/557466677092.html?fromkvrefer=HVMTG&kjSource=pc";
+        String reason = ImageMatchReason.encode("SHOPIFY", "TITLE", "标题", url,
+                "https://img?a=b&c=d", null);
+        ImageMatchReason.Decoded d = ImageMatchReason.decode(reason);
+        assertEquals(url, d.detailUrl());
+        assertEquals("https://img?a=b&c=d", d.imageUrl());
     }
 
     @Test

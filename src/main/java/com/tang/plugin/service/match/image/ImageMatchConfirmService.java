@@ -80,7 +80,8 @@ public class ImageMatchConfirmService {
         String tangbuySkuId = StringUtils.firstNonBlank(dto.getOfferSkuId(), dto.getOfferProductId());
         BigDecimal matchScore = toScore(dto.getSimilarityScore());
         String matchReason = ImageMatchReason.encode(
-                dto.getImageSource(), dto.getQuerySource(), dto.getAppliedQuery(), dto.getDetailUrl());
+                dto.getImageSource(), dto.getQuerySource(), dto.getAppliedQuery(), dto.getDetailUrl(),
+                dto.getOfferImageUrl(), dto.getOfferPrice());
         // Auto (scan-time) confirms land as PENDING for human review; explicit user confirms are ACTIVE.
         BindingStatus targetStatus = dto.isAuto() ? BindingStatus.PENDING : BindingStatus.ACTIVE;
 
@@ -228,6 +229,8 @@ public class ImageMatchConfirmService {
                 .setImageSource(reason.imageSource())
                 .setQuerySource(reason.querySource())
                 .setAppliedQuery(reason.appliedQuery())
-                .setDetailUrl(reason.detailUrl());
+                .setDetailUrl(reason.detailUrl())
+                .setOfferImageUrl(reason.imageUrl())
+                .setOfferPrice(reason.price());
     }
 }

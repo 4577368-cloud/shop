@@ -29,6 +29,10 @@ public class ConfirmImageMatchDTO {
     private String querySource;
     /** Display value of the correction query (from the A3-2a preview). */
     private String appliedQuery;
+    /** Snapshot of the matched candidate's image url, persisted so回显 shows it without re-querying detail. */
+    private String offerImageUrl;
+    /** Snapshot of the matched candidate's price string (gateway raw, e.g. "12.00"). */
+    private String offerPrice;
     /**
      * When true the binding is written as PENDING (AI-suggested, awaiting confirmation) — used by the
      * scan-time auto-link. When false/absent it is an explicit user confirm and lands as ACTIVE.
