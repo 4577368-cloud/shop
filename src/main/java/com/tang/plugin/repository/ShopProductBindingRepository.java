@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -65,6 +66,20 @@ public class ShopProductBindingRepository {
         return findBySkuId(shopName, thirdPlatformSkuId)
                 .filter(b -> b.getDelFlag() != null && b.getDelFlag() == 0)
                 .filter(b -> b.getBindStatus() == BindingStatus.ACTIVE);
+    }
+
+    /**
+     * List all ACTIVE bindings of a shop (del_flag = 0). Read-only; used by A3-2b to回显 bound state
+     * for the whole product list in one query.
+     */
+    public List<ShopProductBinding> listActiveByShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return List.of();
+        }
+        return jdbcTemplate.query(
+                "SELECT " + COLUMNS + " FROM shop_product_binding "
+                        + "WHERE shop_name = ? AND bind_status = ? AND del_flag = 0 ORDER BY id DESC",
+                ROW_MAPPER, shopName, BindingStatus.ACTIVE.name());
     }
 
     /**
