@@ -78,6 +78,26 @@ public class ProductPublishRecordRepository {
         }
     }
 
+    /**
+     * Look up an active record by (shop_name, shopify_product_id). Only PUBLISHED rows carry a
+     * shopify_product_id, so this resolves the catalog candidate behind a published shop product
+     * (used by A3-2a to recover the original source image). Read-only.
+     */
+    public Optional<ProductPublishRecord> findByShopAndShopifyProductId(String shopName, String shopifyProductId) {
+        if (StringUtils.isAnyBlank(shopName, shopifyProductId)) {
+            return Optional.empty();
+        }
+        try {
+            ProductPublishRecord row = jdbcTemplate.queryForObject(
+                    "SELECT " + COLUMNS + " FROM product_publish_record "
+                            + "WHERE shop_name = ? AND shopify_product_id = ? AND del_flag = 0",
+                    ROW_MAPPER, shopName, shopifyProductId);
+            return Optional.ofNullable(row);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
     public Optional<ProductPublishRecord> findById(Long id) {
         if (id == null) {
             return Optional.empty();
