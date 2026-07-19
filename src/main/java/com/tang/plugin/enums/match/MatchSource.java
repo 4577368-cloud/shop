@@ -8,5 +8,7 @@ public enum MatchSource {
     MANUAL,
     RULE,
     IMAGE,
-    AI
+    AI,
+    /** 1:1 link established when publishing a Tangbuy-catalog product (route B) — no matching needed. */
+    CATALOG
 }

@@ -45,6 +45,8 @@ public class CatalogPublishService {
     private ShopifyStoreAuthRepository shopifyStoreAuthRepository;
     @Resource
     private ShopifyProductPublishComponent shopifyProductPublishComponent;
+    @Resource
+    private CatalogPublishLinkService catalogPublishLinkService;
 
     public PublishResultVO publish(String shopName, String candidateId) {
         if (StringUtils.isBlank(shopName) || StringUtils.isBlank(candidateId)) {
@@ -100,6 +102,16 @@ public class CatalogPublishService {
 
             productPublishRecordService.markPublished(record.getId(), created.getProductId(),
                     created.getHandle(), created.getVariantId(), created.getInventoryItemId());
+
+            // A published product is its own source (1:1) — record the definitive CATALOG binding so it
+            // shows as已关联·来自 Tangbuy 商城 and is excluded from image-search matching. Fail-open.
+            try {
+                catalogPublishLinkService.linkPublished(
+                        shopName, candidate, created.getProductId(), created.getVariantId());
+            } catch (Exception linkEx) {
+                log.warn("Catalog publish link failed (non-fatal) shopName={} candidateId={}: {}",
+                        shopName, candidateId, linkEx.getMessage());
+            }
 
             return new PublishResultVO()
                     .setStatus("OK")

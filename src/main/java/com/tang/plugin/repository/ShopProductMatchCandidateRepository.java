@@ -137,6 +137,17 @@ public class ShopProductMatchCandidateRepository {
         log.info("Candidate status updated id={} status={}", id, status);
     }
 
+    /** Rewrite only the audit {@code match_reason} (e.g. snapshot backfill). Score/status untouched. */
+    public void updateMatchReason(Long id, String matchReason) {
+        if (id == null) {
+            return;
+        }
+        jdbcTemplate.update(
+                "UPDATE shop_product_match_candidate SET match_reason = ?, updated_at = ? WHERE id = ?",
+                matchReason, Timestamp.from(Instant.now()), id);
+        log.info("Candidate match_reason updated id={}", id);
+    }
+
     private Optional<Long> findIdByNaturalKey(ShopProductMatchCandidate candidate) {
         try {
             Long id = jdbcTemplate.queryForObject(

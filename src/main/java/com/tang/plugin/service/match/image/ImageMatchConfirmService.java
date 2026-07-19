@@ -119,7 +119,7 @@ public class ImageMatchConfirmService {
         });
 
         return view(itemId, variantGid, tangbuyProductId, tangbuySkuId, matchScore,
-                ImageMatchReason.decode(matchReason), targetStatus);
+                ImageMatchReason.decode(matchReason), targetStatus, BIND_SOURCE_FROM_CANDIDATE);
     }
 
     /**
@@ -178,7 +178,7 @@ public class ImageMatchConfirmService {
             }
             views.add(view(binding.getThirdPlatformItemId(),
                     binding.getThirdPlatformSkuId(), binding.getTangbuyProductId(), binding.getTangbuySkuId(),
-                    score, reason, binding.getBindStatus()));
+                    score, reason, binding.getBindStatus(), binding.getBindSource()));
         }
         return views;
     }
@@ -217,7 +217,7 @@ public class ImageMatchConfirmService {
 
     private static ImageBindingView view(String itemId, String variantGid,
                                          String tangbuyProductId, String tangbuySkuId, BigDecimal score,
-                                         ImageMatchReason.Decoded reason, BindingStatus status) {
+                                         ImageMatchReason.Decoded reason, BindingStatus status, String bindSource) {
         return new ImageBindingView()
                 .setBound(true)
                 .setThirdPlatformItemId(itemId)
@@ -226,6 +226,7 @@ public class ImageMatchConfirmService {
                 .setTangbuySkuId(tangbuySkuId)
                 .setMatchScore(score)
                 .setBindStatus(status == null ? null : status.name())
+                .setBindSource(bindSource)
                 .setImageSource(reason.imageSource())
                 .setQuerySource(reason.querySource())
                 .setAppliedQuery(reason.appliedQuery())

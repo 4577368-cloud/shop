@@ -3,6 +3,7 @@ package com.tang.plugin.controller.catalog;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.publish.PublishRequest;
 import com.tang.plugin.domain.dto.publish.PublishResultVO;
+import com.tang.plugin.service.publish.CatalogPublishLinkService;
 import com.tang.plugin.service.publish.CatalogPublishService;
 import com.tang.plugin.service.publish.ProductPublishRecordService;
 import jakarta.annotation.Resource;
@@ -30,6 +31,8 @@ public class PublishController {
     private CatalogPublishService catalogPublishService;
     @Resource
     private ProductPublishRecordService productPublishRecordService;
+    @Resource
+    private CatalogPublishLinkService catalogPublishLinkService;
 
     @PostMapping("/publish")
     public PublishResultVO publish(@RequestBody PublishRequest request) {
@@ -43,5 +46,14 @@ public class PublishController {
     @GetMapping("/published-count")
     public Map<String, Integer> publishedCount(@RequestParam("shopName") String shopName) {
         return Map.of("count", productPublishRecordService.countPublished(shopName));
+    }
+
+    /**
+     * One-shot repair: backfill the 1:1 CATALOG bindings for products published before publish-time
+     * linking existed. Idempotent — products already linked are left untouched.
+     */
+    @PostMapping("/link-published")
+    public CatalogPublishLinkService.BackfillResult linkPublished(@RequestParam("shopName") String shopName) {
+        return catalogPublishLinkService.backfillPublishedBindings(shopName);
     }
 }

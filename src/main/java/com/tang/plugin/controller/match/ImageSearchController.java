@@ -4,6 +4,8 @@ import com.tang.plugin.domain.dto.match.ConfirmImageMatchDTO;
 import com.tang.plugin.domain.dto.match.ImageBindingView;
 import com.tang.plugin.domain.dto.match.image.ImageSearchRequest;
 import com.tang.plugin.domain.dto.match.image.ImageSearchResultVO;
+import com.tang.plugin.service.match.image.ImageBindingSnapshotBackfillService;
+import com.tang.plugin.service.match.image.ImageBindingSnapshotBackfillService.BackfillResult;
 import com.tang.plugin.service.match.image.ImageMatchConfirmService;
 import com.tang.plugin.service.match.image.ImageSearchService;
 import jakarta.annotation.Resource;
@@ -40,6 +42,8 @@ public class ImageSearchController {
     private ImageSearchService imageSearchService;
     @Resource
     private ImageMatchConfirmService imageMatchConfirmService;
+    @Resource
+    private ImageBindingSnapshotBackfillService imageBindingSnapshotBackfillService;
 
     @PostMapping("/image-search")
     public ImageSearchResultVO imageSearch(@RequestBody ImageSearchRequest request) {
@@ -69,5 +73,14 @@ public class ImageSearchController {
     @PostMapping("/image-search/unbind")
     public void unbind(@RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
         imageMatchConfirmService.unbind(shopName, thirdPlatformItemId);
+    }
+
+    /**
+     * Repair legacy bindings whose {@code match_reason} lacks the image/price snapshot (re-search →
+     * match the bound offer → else derive from offer detail). One-shot, idempotent, fail-open.
+     */
+    @PostMapping("/image-search/backfill-snapshots")
+    public BackfillResult backfillSnapshots(@RequestParam String shopName) {
+        return imageBindingSnapshotBackfillService.backfill(shopName);
     }
 }

@@ -22,6 +22,8 @@ public class ImageBindingView {
     private BigDecimal matchScore;
     /** PENDING = AI-suggested, awaiting confirmation; ACTIVE = confirmed. Null only for legacy rows. */
     private String bindStatus;
+    /** How the binding was created: FROM_CANDIDATE (image match) or FROM_PUBLISH (1:1 catalog publish). */
+    private String bindSource;
     private String imageSource;
     private String querySource;
     private String appliedQuery;

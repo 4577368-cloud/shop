@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Read-only Tangbuy catalog recommendations (Path B). Public endpoint under /api/plugin/**;
@@ -36,11 +37,18 @@ public class TangbuyCatalogController {
     @GetMapping("/recommendations")
     public List<CatalogRecommendationItem> recommendations(
             @RequestParam(value = "shopName", required = false) String shopName,
+            @RequestParam(value = "offset", required = false) Integer offset,
             @RequestParam(value = "limit", required = false) Integer limit) {
         PricingTemplate template = pricingTemplateService.getEffective(shopName);
-        return tangbuyCatalogService.list(limit).stream()
+        return tangbuyCatalogService.list(offset, limit).stream()
                 .map(p -> toItem(p, template))
                 .toList();
+    }
+
+    /** Total number of catalog entries (for pagination / the "发现新品" total). */
+    @GetMapping("/recommendations/count")
+    public Map<String, Integer> recommendationsCount() {
+        return Map.of("count", tangbuyCatalogService.size());
     }
 
     private CatalogRecommendationItem toItem(TangbuyCatalogProduct p, PricingTemplate template) {
