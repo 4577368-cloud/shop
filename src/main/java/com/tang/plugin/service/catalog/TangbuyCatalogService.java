@@ -23,9 +23,9 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Tangbuy catalog for Path B recommendations / publish. Prefers the live Admin mall
- * {@code pageInfo} API when {@link TangbuyMallClient#isConfigured()}; otherwise loads the bundled
- * offline JSON (local/dev fallback).
+ * Tangbuy catalog for Path B recommendations / publish. Prefers the live mall API when
+ * {@link TangbuyMallClient#isConfigured()} (gateway {@code allSubScriptionSearch} by default);
+ * otherwise loads the bundled offline JSON (local/dev fallback).
  */
 @Slf4j
 @Service
@@ -46,7 +46,8 @@ public class TangbuyCatalogService {
     @PostConstruct
     public void load() {
         if (tangbuyMallClient.isConfigured()) {
-            log.info("Tangbuy catalog using live mall pageInfo (offline JSON skipped)");
+            log.info("Tangbuy catalog using live mall API source={} (offline JSON skipped)",
+                    tangbuyMallClient.resolvedSource());
             return;
         }
         loadOfflineJson();
@@ -103,6 +104,7 @@ public class TangbuyCatalogService {
         Map<String, Object> out = new LinkedHashMap<>();
         boolean live = tangbuyMallClient.isConfigured();
         out.put("mode", live ? "live" : "offline_json");
+        out.put("source", tangbuyMallClient.resolvedSource());
         out.put("configured", live);
         if (!live) {
             out.put("offlineCount", offlineCatalog.size());
@@ -117,7 +119,7 @@ public class TangbuyCatalogService {
         } catch (Exception e) {
             out.put("ok", false);
             out.put("error", e.getMessage());
-            log.error("Tangbuy mall status probe failed", e);
+            log.error("Tangbuy mall status probe failed source={}", tangbuyMallClient.resolvedSource(), e);
         }
         return out;
     }
@@ -190,11 +192,17 @@ public class TangbuyCatalogService {
 
         String imageUrl = null;
         JSONArray images = row.getJSONArray("imageList");
+        if (images == null || images.isEmpty()) {
+            images = row.getJSONArray("itemImages");
+        }
         if (images != null && !images.isEmpty()) {
             imageUrl = StringUtils.trimToNull(images.getString(0));
         }
 
         BigDecimal price = row.getBigDecimal("price");
+        if (price == null) {
+            price = row.getBigDecimal("providerPrice");
+        }
 
         return new TangbuyCatalogProduct()
                 .setCandidateId(candidateId)

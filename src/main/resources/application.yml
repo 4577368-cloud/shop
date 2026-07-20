@@ -54,8 +54,11 @@ tang:
         - shop-name: "your-shop"
           shop-domain: "your-shop.myshopify.com"
           access-token: ""
-    # Tangbuy Admin mall ES pageInfo (Path B live catalog). Empty token → offline JSON fallback.
+    # Tangbuy mall catalog (Path B). Token = portal JWT (dropshipping.tangbuy.cc login).
+    # Default source=gateway uses tangbuy.cc (Render-reachable); admin pageInfo often I/O-fails off-VPN.
     tangbuy-mall:
+      source: ${TANG_PLUGIN_TANGBUY_MALL_SOURCE:gateway}
+      gateway-base-url: ${TANG_PLUGIN_TANGBUY_MALL_GATEWAY_BASE_URL:https://tangbuy.cc}
       base-url: ${TANG_PLUGIN_TANGBUY_MALL_BASE_URL:https://admin.tangbuy.cc}
       token: ${TANG_PLUGIN_TANGBUY_MALL_TOKEN:}
       connect-timeout-ms: 5000

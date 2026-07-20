@@ -55,8 +55,12 @@ services:
         sync: false
       - key: TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL
         sync: false
-      # Tangbuy Admin mall Bearer token (JWT body only). Set in Render Dashboard — never commit.
+      # Tangbuy portal JWT (dropshipping.tangbuy.cc login). Set in Render Dashboard — never commit.
       - key: TANG_PLUGIN_TANGBUY_MALL_TOKEN
         sync: false
+      - key: TANG_PLUGIN_TANGBUY_MALL_SOURCE
+        value: gateway
+      - key: TANG_PLUGIN_TANGBUY_MALL_GATEWAY_BASE_URL
+        value: https://tangbuy.cc
       - key: TANG_PLUGIN_TANGBUY_MALL_BASE_URL
         value: https://admin.tangbuy.cc
