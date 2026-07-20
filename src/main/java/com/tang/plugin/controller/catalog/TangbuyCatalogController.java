@@ -51,6 +51,14 @@ public class TangbuyCatalogController {
         return Map.of("count", tangbuyCatalogService.size());
     }
 
+    /**
+     * Ops diagnostic: live vs offline catalog, and a one-row pageInfo probe (never returns the token).
+     */
+    @GetMapping("/mall-status")
+    public Map<String, Object> mallStatus() {
+        return tangbuyCatalogService.mallStatus();
+    }
+
     private CatalogRecommendationItem toItem(TangbuyCatalogProduct p, PricingTemplate template) {
         return new CatalogRecommendationItem()
                 .setCandidateId(p.getCandidateId())

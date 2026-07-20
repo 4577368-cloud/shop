@@ -24,7 +24,7 @@ import java.util.Map;
 
 /**
  * HTTP client for Tangbuy Admin mall ES {@code pageInfo}. Token must be configured via
- * {@link TangbuyMallProperties#getAuthorization()}; this class never logs the token.
+ * {@link TangbuyMallProperties#getToken()}; this class never logs the token.
  */
 @Slf4j
 @Component
@@ -38,7 +38,7 @@ public class TangbuyMallClient {
     private volatile RestClient restClient;
 
     public boolean isConfigured() {
-        return StringUtils.isNotBlank(properties.getAuthorization());
+        return StringUtils.isNotBlank(properties.resolvedToken());
     }
 
     /**
@@ -74,13 +74,14 @@ public class TangbuyMallClient {
             raw = client().post()
                     .uri(url)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .header("Authorization", bearerHeader())
+                    .header("Authorization", "Bearer " + properties.resolvedToken())
                     .accept(MediaType.APPLICATION_JSON)
                     .body(JSON.toJSONString(body))
                     .retrieve()
                     .body(String.class);
         } catch (RestClientException e) {
-            log.error("Tangbuy mall pageInfo HTTP failed pageNum={} pageSize={}", pageNum, pageSize, e);
+            log.error("Tangbuy mall pageInfo HTTP failed pageNum={} pageSize={} url={}",
+                    pageNum, pageSize, url, e);
             throw new CustomException("Tangbuy mall pageInfo HTTP failed: " + e.getMessage(), e);
         }
 
@@ -111,14 +112,6 @@ public class TangbuyMallClient {
         return new PageInfoResult()
                 .setTotal(total)
                 .setRows(Collections.unmodifiableList(list));
-    }
-
-    private String bearerHeader() {
-        String token = StringUtils.trimToEmpty(properties.getAuthorization());
-        if (StringUtils.startsWithIgnoreCase(token, "Bearer ")) {
-            return token;
-        }
-        return "Bearer " + token;
     }
 
     private RestClient client() {

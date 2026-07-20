@@ -92,41 +92,55 @@ public class TangbuyCatalogService {
 
     public int size() {
         if (tangbuyMallClient.isConfigured()) {
-            try {
-                PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, null);
-                return Math.max(0, page.getTotal());
-            } catch (Exception e) {
-                log.error("Tangbuy mall size() failed", e);
-                return 0;
-            }
+            PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, null);
+            return Math.max(0, page.getTotal());
         }
         return offlineCatalog.size();
     }
 
+    /** Diagnostic snapshot for ops (never includes the token). */
+    public Map<String, Object> mallStatus() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        boolean live = tangbuyMallClient.isConfigured();
+        out.put("mode", live ? "live" : "offline_json");
+        out.put("configured", live);
+        if (!live) {
+            out.put("offlineCount", offlineCatalog.size());
+            out.put("ok", true);
+            return out;
+        }
+        try {
+            PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, null);
+            out.put("ok", true);
+            out.put("total", page.getTotal());
+            out.put("sampleRows", page.getRows() == null ? 0 : page.getRows().size());
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", e.getMessage());
+            log.error("Tangbuy mall status probe failed", e);
+        }
+        return out;
+    }
+
     private List<TangbuyCatalogProduct> listFromMall(int offset, int pageSize) {
         int pageNum = (offset / pageSize) + 1;
-        try {
-            PageInfoResult page = tangbuyMallClient.pageInfo(pageNum, pageSize, null);
-            List<TangbuyCatalogProduct> out = new ArrayList<>();
-            for (JSONObject row : page.getRows()) {
-                TangbuyCatalogProduct product = fromMallRow(row);
-                if (product != null) {
-                    out.add(product);
-                }
+        PageInfoResult page = tangbuyMallClient.pageInfo(pageNum, pageSize, null);
+        List<TangbuyCatalogProduct> out = new ArrayList<>();
+        for (JSONObject row : page.getRows()) {
+            TangbuyCatalogProduct product = fromMallRow(row);
+            if (product != null) {
+                out.add(product);
             }
-            // When offset is not page-aligned, drop the leading remainder of the fetched page.
-            int skip = offset % pageSize;
-            if (skip > 0 && skip < out.size()) {
-                return List.copyOf(out.subList(skip, out.size()));
-            }
-            if (skip > 0) {
-                return List.of();
-            }
-            return List.copyOf(out);
-        } catch (Exception e) {
-            log.error("Tangbuy mall list failed offset={} pageSize={}", offset, pageSize, e);
+        }
+        // When offset is not page-aligned, drop the leading remainder of the fetched page.
+        int skip = offset % pageSize;
+        if (skip > 0 && skip < out.size()) {
+            return List.copyOf(out.subList(skip, out.size()));
+        }
+        if (skip > 0) {
             return List.of();
         }
+        return List.copyOf(out);
     }
 
     private Optional<TangbuyCatalogProduct> findFromMall(String candidateId) {
