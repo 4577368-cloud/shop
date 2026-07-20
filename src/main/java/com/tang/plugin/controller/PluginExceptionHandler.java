@@ -16,11 +16,19 @@ public class PluginExceptionHandler {
 
     @ExceptionHandler(CustomException.class)
     public ResponseEntity<Map<String, Object>> handleCustom(CustomException e) {
-        log.error("Business error: {}", e.getMessage(), e);
+        int status = e.getHttpStatus() > 0 ? e.getHttpStatus() : HttpStatus.BAD_REQUEST.value();
+        if (status >= 500) {
+            log.error("Business error: {}", e.getMessage(), e);
+        } else {
+            log.warn("Business error status={} code={}: {}", status, e.getCode(), e.getMessage());
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "ERROR");
         body.put("message", e.getMessage());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+        if (e.getCode() != null) {
+            body.put("code", e.getCode());
+        }
+        return ResponseEntity.status(status).body(body);
     }
 
     @ExceptionHandler(Exception.class)

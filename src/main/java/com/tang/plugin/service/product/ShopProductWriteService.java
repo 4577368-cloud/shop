@@ -19,12 +19,14 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 
 /**
- * Phase 2: write editable fields back to Shopify, then refresh the local mirror from GraphQL.
+ * Phase 2/3: write editable fields back to Shopify, then refresh the local mirror from GraphQL.
+ * Phase 3: optional optimistic concurrency via {@code expectedUpdatedAt}.
  */
 @Slf4j
 @Service
@@ -32,6 +34,7 @@ public class ShopProductWriteService {
 
     private static final Set<String> ALLOWED_STATUS = Set.of("ACTIVE", "DRAFT", "ARCHIVED");
     private static final String DEFAULT_CURRENCY = "USD";
+    public static final String CODE_PRODUCT_CONFLICT = "PRODUCT_CONFLICT";
 
     @Resource
     private ShopifyEnabledShopProvider shopifyEnabledShopProvider;
@@ -70,8 +73,9 @@ public class ShopProductWriteService {
         ShopifyEnabledShop shop = shopifyEnabledShopProvider.findByShopName(shopName)
                 .orElseThrow(() -> new CustomException("shop not authorized, shopName=" + shopName));
 
-        // Ensure the product exists in our mirror before writing to Shopify.
-        shopProductQueryService.getDetail(shopName, itemId);
+        // Ensure the product exists; Phase 3 conflict check against mirror updatedAt.
+        ShopProductDetailVO current = shopProductQueryService.getDetail(shopName, itemId);
+        assertNoConflict(req, current);
 
         shopifyProductUpdateComponent.updateProductFields(
                 shopName, shop.getShopDomain(), shop.getAccessToken(),
@@ -92,6 +96,26 @@ public class ShopProductWriteService {
 
         refreshLocalMirror(shopName, shop, itemId);
         return shopProductQueryService.getDetail(shopName, itemId);
+    }
+
+    private void assertNoConflict(ShopProductUpdateRequest req, ShopProductDetailVO current) {
+        if (Boolean.TRUE.equals(req.getForce()) || req.getExpectedUpdatedAt() == null) {
+            return;
+        }
+        Instant actual = current.getUpdatedAt();
+        Instant expected = req.getExpectedUpdatedAt();
+        if (actual == null) {
+            return;
+        }
+        // Truncate to millis: JSON Instant round-trips may drop nanos.
+        Instant a = actual.truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        Instant e = expected.truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        if (!a.equals(e)) {
+            throw new CustomException(
+                    "product was updated elsewhere (Shopify or webhook); reload or force overwrite",
+                    409,
+                    CODE_PRODUCT_CONFLICT);
+        }
     }
 
     private void refreshLocalMirror(String shopName, ShopifyEnabledShop shop, String itemId) {
