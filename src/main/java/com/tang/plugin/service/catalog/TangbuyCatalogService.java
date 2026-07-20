@@ -45,12 +45,13 @@ public class TangbuyCatalogService {
 
     @PostConstruct
     public void load() {
-        if (tangbuyMallClient.isConfigured()) {
-            log.info("Tangbuy catalog using live mall API source={} (offline JSON skipped)",
-                    tangbuyMallClient.resolvedSource());
-            return;
-        }
         loadOfflineJson();
+        if (tangbuyMallClient.isConfigured()) {
+            log.info("Tangbuy catalog live mall API source={} (offline JSON fallback count={})",
+                    tangbuyMallClient.resolvedSource(), offlineCatalog.size());
+        } else {
+            log.info("Tangbuy catalog using offline JSON count={}", offlineCatalog.size());
+        }
     }
 
     /**
@@ -71,9 +72,19 @@ public class TangbuyCatalogService {
         int pageSize = (limit == null || limit <= 0) ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
 
         if (tangbuyMallClient.isConfigured()) {
-            return listFromMall(from, pageSize);
+            try {
+                return listFromMall(from, pageSize);
+            } catch (Exception e) {
+                log.warn("Tangbuy mall list failed source={}, using offline fallback ({}): {}",
+                        tangbuyMallClient.resolvedSource(), offlineCatalog.size(), e.getMessage());
+                return listOffline(from, pageSize);
+            }
         }
 
+        return listOffline(from, pageSize);
+    }
+
+    private List<TangbuyCatalogProduct> listOffline(int from, int pageSize) {
         if (from >= offlineCatalog.size()) {
             return List.of();
         }
@@ -85,16 +96,26 @@ public class TangbuyCatalogService {
         if (StringUtils.isBlank(candidateId)) {
             return Optional.empty();
         }
+        String id = candidateId.trim();
         if (tangbuyMallClient.isConfigured()) {
-            return findFromMall(candidateId.trim());
+            Optional<TangbuyCatalogProduct> live = findFromMall(id);
+            if (live.isPresent()) {
+                return live;
+            }
+            return Optional.ofNullable(offlineById.get(id));
         }
-        return Optional.ofNullable(offlineById.get(candidateId.trim()));
+        return Optional.ofNullable(offlineById.get(id));
     }
 
     public int size() {
         if (tangbuyMallClient.isConfigured()) {
-            PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, null);
-            return Math.max(0, page.getTotal());
+            try {
+                PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, null);
+                return Math.max(0, page.getTotal());
+            } catch (Exception e) {
+                log.warn("Tangbuy mall size failed source={}, using offline fallback ({}): {}",
+                        tangbuyMallClient.resolvedSource(), offlineCatalog.size(), e.getMessage());
+            }
         }
         return offlineCatalog.size();
     }
@@ -119,6 +140,7 @@ public class TangbuyCatalogService {
         } catch (Exception e) {
             out.put("ok", false);
             out.put("error", e.getMessage());
+            out.put("offlineFallbackCount", offlineCatalog.size());
             log.error("Tangbuy mall status probe failed source={}", tangbuyMallClient.resolvedSource(), e);
         }
         return out;

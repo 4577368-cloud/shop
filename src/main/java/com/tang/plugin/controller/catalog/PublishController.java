@@ -39,7 +39,7 @@ public class PublishController {
         if (request == null) {
             throw new CustomException("publish requires a body");
         }
-        return catalogPublishService.publish(request.getShopName(), request.getCandidateId());
+        return catalogPublishService.publish(request);
     }
 
     /** "已刊登" count: products successfully published (listed) from the Tangbuy catalog for a shop. */

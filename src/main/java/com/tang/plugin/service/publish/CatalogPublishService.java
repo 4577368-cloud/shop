@@ -2,6 +2,7 @@ package com.tang.plugin.service.publish;
 
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.catalog.TangbuyCatalogProduct;
+import com.tang.plugin.domain.dto.publish.PublishRequest;
 import com.tang.plugin.domain.dto.publish.PublishResultVO;
 import com.tang.plugin.domain.dto.publish.ShopifyCreateProductResult;
 import com.tang.plugin.domain.entity.pricing.PricingTemplate;
@@ -48,12 +49,16 @@ public class CatalogPublishService {
     @Resource
     private CatalogPublishLinkService catalogPublishLinkService;
 
-    public PublishResultVO publish(String shopName, String candidateId) {
+    public PublishResultVO publish(PublishRequest request) {
+        if (request == null) {
+            throw new CustomException("publish requires a body");
+        }
+        String shopName = request.getShopName();
+        String candidateId = request.getCandidateId();
         if (StringUtils.isBlank(shopName) || StringUtils.isBlank(candidateId)) {
             throw new CustomException("publish requires shopName and candidateId");
         }
-        TangbuyCatalogProduct candidate = tangbuyCatalogService.findById(candidateId)
-                .orElseThrow(() -> new CustomException("candidate not found, candidateId=" + candidateId));
+        TangbuyCatalogProduct candidate = resolveCandidate(request);
         if (StringUtils.isBlank(candidate.getTitle())) {
             throw new CustomException("candidate has no title, candidateId=" + candidateId);
         }
@@ -128,6 +133,26 @@ public class CatalogPublishService {
             log.error("Publish failed shopName={} candidateId={}", shopName, candidateId, e);
             throw new CustomException("publish failed, candidateId=" + candidateId + ", cause=" + e.getMessage());
         }
+    }
+
+    /** Browser snapshot when Render cannot reach tangbuy.cc; otherwise live/offline catalog lookup. */
+    private TangbuyCatalogProduct resolveCandidate(PublishRequest request) {
+        String candidateId = request.getCandidateId().trim();
+        if (StringUtils.isNotBlank(request.getTitle())) {
+            String currency = StringUtils.trimToNull(request.getCurrency());
+            return new TangbuyCatalogProduct()
+                    .setCandidateId(candidateId)
+                    .setTangbuyProductId(candidateId)
+                    .setTitle(request.getTitle().trim())
+                    .setPrice(request.getPrice())
+                    .setCurrency(currency == null ? "CNY" : currency)
+                    .setImageUrl(StringUtils.trimToNull(request.getImageUrl()))
+                    .setTangbuyUrl(StringUtils.trimToNull(request.getTangbuyUrl()))
+                    .setSupplierShop(StringUtils.trimToNull(request.getSupplierShop()))
+                    .setUpstreamPlatform(StringUtils.trimToNull(request.getUpstreamPlatform()));
+        }
+        return tangbuyCatalogService.findById(candidateId)
+                .orElseThrow(() -> new CustomException("candidate not found, candidateId=" + candidateId));
     }
 
     private ProductPublishRecord snapshot(String shopName, TangbuyCatalogProduct candidate,
