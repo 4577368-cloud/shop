@@ -6,6 +6,7 @@ import com.tang.plugin.domain.bo.product.ShopifyProductMirror;
 import com.tang.plugin.domain.bo.shopify.ShopifyEnabledShop;
 import com.tang.plugin.domain.dto.product.ShopProductDetailVO;
 import com.tang.plugin.domain.dto.product.ShopProductUpdateRequest;
+import com.tang.plugin.domain.dto.product.ShopProductVariantUpdate;
 import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.publish.component.ExchangeRateComponent;
@@ -20,13 +21,18 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
- * Phase 2/3: write editable fields back to Shopify, then refresh the local mirror from GraphQL.
+ * Phase 2–4: write editable fields back to Shopify, then refresh the local mirror from GraphQL.
  * Phase 3: optional optimistic concurrency via {@code expectedUpdatedAt}.
+ * Phase 4: multi-variant price + inventory write-back.
  */
 @Slf4j
 @Service
@@ -73,14 +79,58 @@ public class ShopProductWriteService {
         ShopifyEnabledShop shop = shopifyEnabledShopProvider.findByShopName(shopName)
                 .orElseThrow(() -> new CustomException("shop not authorized, shopName=" + shopName));
 
-        // Ensure the product exists; Phase 3 conflict check against mirror updatedAt.
         ShopProductDetailVO current = shopProductQueryService.getDetail(shopName, itemId);
         assertNoConflict(req, current);
+
+        Set<String> mirroredVariantIds = thirdPlatformSkuRepository.listByItem(shopName, itemId).stream()
+                .map(ThirdPlatformSku::getThirdPlatformSkuId)
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toSet());
 
         shopifyProductUpdateComponent.updateProductFields(
                 shopName, shop.getShopDomain(), shop.getAccessToken(),
                 itemId, title, req.getDescription(), status);
 
+        Map<String, BigDecimal> prices = collectPriceUpdates(req, itemId, shopName, mirroredVariantIds);
+        if (!prices.isEmpty()) {
+            shopifyProductUpdateComponent.updateVariantPrices(
+                    shopName, shop.getShopDomain(), shop.getAccessToken(), itemId, prices);
+        }
+
+        Map<String, Integer> inventories = collectInventoryUpdates(req, mirroredVariantIds);
+        if (!inventories.isEmpty()) {
+            shopifyProductUpdateComponent.setVariantInventories(
+                    shopName, shop.getShopDomain(), shop.getAccessToken(), itemId, inventories);
+        }
+
+        refreshLocalMirror(shopName, shop, itemId);
+        return shopProductQueryService.getDetail(shopName, itemId);
+    }
+
+    private Map<String, BigDecimal> collectPriceUpdates(ShopProductUpdateRequest req, String itemId,
+                                                        String shopName, Set<String> mirroredVariantIds) {
+        Map<String, BigDecimal> prices = new LinkedHashMap<>();
+        List<ShopProductVariantUpdate> variants = req.getVariants();
+        if (variants != null) {
+            for (ShopProductVariantUpdate v : variants) {
+                if (v == null || v.getPrice() == null) {
+                    continue;
+                }
+                String gid = StringUtils.trimToNull(v.getThirdPlatformSkuId());
+                if (gid == null) {
+                    throw new CustomException("variant update requires thirdPlatformSkuId");
+                }
+                if (!mirroredVariantIds.contains(gid)) {
+                    throw new CustomException(
+                            "variant not in mirror, shopName=" + shopName + ", variantId=" + gid);
+                }
+                if (v.getPrice().signum() < 0) {
+                    throw new CustomException("variant price must be >= 0, variantId=" + gid);
+                }
+                prices.put(gid, v.getPrice());
+            }
+        }
+        // Back-compat: defaultVariantPrice fills first variant when not already in variants[].
         if (req.getDefaultVariantPrice() != null) {
             Optional<ThirdPlatformSku> first = thirdPlatformSkuRepository.findFirstByItem(shopName, itemId);
             String variantGid = first.map(ThirdPlatformSku::getThirdPlatformSkuId).orElse(null);
@@ -88,14 +138,35 @@ public class ShopProductWriteService {
                 throw new CustomException(
                         "no variant mirrored for price update; sync products first, shopName=" + shopName);
             }
-            BigDecimal price = req.getDefaultVariantPrice();
-            shopifyProductUpdateComponent.updateVariantPrice(
-                    shopName, shop.getShopDomain(), shop.getAccessToken(),
-                    itemId, variantGid, price);
+            prices.putIfAbsent(variantGid, req.getDefaultVariantPrice());
         }
+        return prices;
+    }
 
-        refreshLocalMirror(shopName, shop, itemId);
-        return shopProductQueryService.getDetail(shopName, itemId);
+    private Map<String, Integer> collectInventoryUpdates(ShopProductUpdateRequest req,
+                                                         Set<String> mirroredVariantIds) {
+        Map<String, Integer> inventories = new LinkedHashMap<>();
+        List<ShopProductVariantUpdate> variants = req.getVariants();
+        if (variants == null) {
+            return inventories;
+        }
+        for (ShopProductVariantUpdate v : variants) {
+            if (v == null || v.getInventoryQuantity() == null) {
+                continue;
+            }
+            String gid = StringUtils.trimToNull(v.getThirdPlatformSkuId());
+            if (gid == null) {
+                throw new CustomException("variant update requires thirdPlatformSkuId");
+            }
+            if (!mirroredVariantIds.contains(gid)) {
+                throw new CustomException("variant not in mirror for inventory, variantId=" + gid);
+            }
+            if (v.getInventoryQuantity() < 0) {
+                throw new CustomException("inventory quantity must be >= 0, variantId=" + gid);
+            }
+            inventories.put(gid, v.getInventoryQuantity());
+        }
+        return inventories;
     }
 
     private void assertNoConflict(ShopProductUpdateRequest req, ShopProductDetailVO current) {
@@ -107,7 +178,6 @@ public class ShopProductWriteService {
         if (actual == null) {
             return;
         }
-        // Truncate to millis: JSON Instant round-trips may drop nanos.
         Instant a = actual.truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
         Instant e = expected.truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
         if (!a.equals(e)) {

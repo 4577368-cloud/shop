@@ -4,9 +4,10 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 
 /**
- * Phase 2/3 write-back body: editable Shopify product fields from the workbench drawer.
+ * Phase 2–4 write-back body: editable Shopify product fields from the workbench drawer.
  */
 @Data
 public class ShopProductUpdateRequest {
@@ -18,9 +19,14 @@ public class ShopProductUpdateRequest {
     private String status;
     /**
      * Optional default-variant price (updates the lowest-position active variant).
-     * Null = leave variant price unchanged.
+     * Kept for back-compat; prefer {@link #variants} in Phase 4.
+     * Null = leave unchanged (unless covered by {@link #variants}).
      */
     private BigDecimal defaultVariantPrice;
+    /**
+     * Phase 4: per-variant price / inventory updates. Null or empty = no multi-variant writes.
+     */
+    private List<ShopProductVariantUpdate> variants;
     /**
      * Phase 3 optimistic concurrency: mirror {@code updatedAt} from the last GET.
      * When set (and {@link #force} is false), a mismatch returns HTTP 409 PRODUCT_CONFLICT.

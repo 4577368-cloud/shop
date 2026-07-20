@@ -86,9 +86,9 @@ public class ProductSyncAdminController {
     }
 
     /**
-     * Phase 2/3 write-back: update Shopify product fields, then refresh the local mirror.
-     * Body may include {@code expectedUpdatedAt} for optimistic concurrency (409 on mismatch)
-     * and {@code force=true} to overwrite.
+     * Phase 2–4 write-back: update Shopify product / variant fields, then refresh the local mirror.
+     * Body may include {@code expectedUpdatedAt} (409 on mismatch), {@code force=true},
+     * and Phase 4 {@code variants[]} for multi-variant price / inventory.
      */
     @PutMapping("/detail")
     public ShopProductDetailVO update(@RequestParam String shopName,
