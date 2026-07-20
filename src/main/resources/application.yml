@@ -54,3 +54,9 @@ tang:
         - shop-name: "your-shop"
           shop-domain: "your-shop.myshopify.com"
           access-token: ""
+    # Tangbuy Admin mall ES pageInfo (Path B live catalog). Empty token → offline JSON fallback.
+    tangbuy-mall:
+      base-url: ${TANG_PLUGIN_TANGBUY_MALL_BASE_URL:https://admin.tangbuy.cc}
+      authorization: ${TANG_PLUGIN_TANGBUY_MALL_TOKEN:}
+      connect-timeout-ms: 5000
+      read-timeout-ms: 20000

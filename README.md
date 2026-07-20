@@ -183,6 +183,7 @@ git push -u origin main
    - `TANG_PLUGIN_SHOPIFY_API_SECRET`
    - `TANG_PLUGIN_SHOPIFY_REDIRECT_URI=https://<服务名>.onrender.com/api/plugin/shopify/auth/callback`
    - `TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL=https://<服务名>.onrender.com`
+   - `TANG_PLUGIN_TANGBUY_MALL_TOKEN`（Tangbuy Admin 商城 pageInfo 的 Bearer JWT，**只填 token 本体**；用于路径 B 实时货盘。未设置时回退到打包的 offline JSON）
 
 说明：免费实例会休眠；数据现由持久化 PostgreSQL 存储（不再随重启清空）。免费 PostgreSQL 有容量/时限，生产前请评估升档。
 

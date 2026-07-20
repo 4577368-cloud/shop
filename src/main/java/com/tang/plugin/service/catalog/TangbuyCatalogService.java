@@ -4,13 +4,16 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.tang.plugin.domain.dto.catalog.TangbuyCatalogProduct;
+import com.tang.plugin.service.catalog.TangbuyMallClient.PageInfoResult;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,9 +23,9 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Loads the Tangbuy offline catalog (bundled classpath JSON) into memory at startup and serves
- * read-only lookups. Order is preserved from the source file. Test-phase data source; swapping to a
- * real Tangbuy catalog later only touches this class. No DB, no external calls (M1-1).
+ * Tangbuy catalog for Path B recommendations / publish. Prefers the live Admin mall
+ * {@code pageInfo} API when {@link TangbuyMallClient#isConfigured()}; otherwise loads the bundled
+ * offline JSON (local/dev fallback).
  */
 @Slf4j
 @Service
@@ -33,12 +36,180 @@ public class TangbuyCatalogService {
     private static final int MAX_LIMIT = 100;
     private static final String DEFAULT_CURRENCY = "CNY";
 
-    /** Insertion-ordered, immutable after load. */
-    private List<TangbuyCatalogProduct> catalog = List.of();
-    private Map<String, TangbuyCatalogProduct> byId = Map.of();
+    @Resource
+    private TangbuyMallClient tangbuyMallClient;
+
+    /** Offline fallback only; unused when the mall token is configured. */
+    private List<TangbuyCatalogProduct> offlineCatalog = List.of();
+    private Map<String, TangbuyCatalogProduct> offlineById = Map.of();
 
     @PostConstruct
     public void load() {
+        if (tangbuyMallClient.isConfigured()) {
+            log.info("Tangbuy catalog using live mall pageInfo (offline JSON skipped)");
+            return;
+        }
+        loadOfflineJson();
+    }
+
+    /**
+     * First {@code limit} entries in source order. limit defaults to 40, is capped at 100, and any
+     * non-positive value falls back to the default.
+     */
+    public List<TangbuyCatalogProduct> list(Integer limit) {
+        return list(0, limit);
+    }
+
+    /**
+     * A page of {@code limit} entries starting at {@code offset} (source order). offset defaults to 0
+     * (negatives clamp to 0); limit defaults to 40 and is capped at 100 per page. Returns an empty list
+     * when offset is past the end.
+     */
+    public List<TangbuyCatalogProduct> list(Integer offset, Integer limit) {
+        int from = (offset == null || offset < 0) ? 0 : offset;
+        int pageSize = (limit == null || limit <= 0) ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
+
+        if (tangbuyMallClient.isConfigured()) {
+            return listFromMall(from, pageSize);
+        }
+
+        if (from >= offlineCatalog.size()) {
+            return List.of();
+        }
+        int to = Math.min(from + pageSize, offlineCatalog.size());
+        return offlineCatalog.subList(from, to);
+    }
+
+    public Optional<TangbuyCatalogProduct> findById(String candidateId) {
+        if (StringUtils.isBlank(candidateId)) {
+            return Optional.empty();
+        }
+        if (tangbuyMallClient.isConfigured()) {
+            return findFromMall(candidateId.trim());
+        }
+        return Optional.ofNullable(offlineById.get(candidateId.trim()));
+    }
+
+    public int size() {
+        if (tangbuyMallClient.isConfigured()) {
+            try {
+                PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, null);
+                return Math.max(0, page.getTotal());
+            } catch (Exception e) {
+                log.error("Tangbuy mall size() failed", e);
+                return 0;
+            }
+        }
+        return offlineCatalog.size();
+    }
+
+    private List<TangbuyCatalogProduct> listFromMall(int offset, int pageSize) {
+        int pageNum = (offset / pageSize) + 1;
+        try {
+            PageInfoResult page = tangbuyMallClient.pageInfo(pageNum, pageSize, null);
+            List<TangbuyCatalogProduct> out = new ArrayList<>();
+            for (JSONObject row : page.getRows()) {
+                TangbuyCatalogProduct product = fromMallRow(row);
+                if (product != null) {
+                    out.add(product);
+                }
+            }
+            // When offset is not page-aligned, drop the leading remainder of the fetched page.
+            int skip = offset % pageSize;
+            if (skip > 0 && skip < out.size()) {
+                return List.copyOf(out.subList(skip, out.size()));
+            }
+            if (skip > 0) {
+                return List.of();
+            }
+            return List.copyOf(out);
+        } catch (Exception e) {
+            log.error("Tangbuy mall list failed offset={} pageSize={}", offset, pageSize, e);
+            return List.of();
+        }
+    }
+
+    private Optional<TangbuyCatalogProduct> findFromMall(String candidateId) {
+        Object itemId = parseItemId(candidateId);
+        if (itemId == null) {
+            return Optional.empty();
+        }
+        try {
+            PageInfoResult page = tangbuyMallClient.pageInfo(1, 1, List.of(itemId));
+            for (JSONObject row : page.getRows()) {
+                TangbuyCatalogProduct product = fromMallRow(row);
+                if (product != null && candidateId.equals(product.getCandidateId())) {
+                    return Optional.of(product);
+                }
+                // Accept when API returns the same id even if status filter dropped mapping.
+                if (product != null) {
+                    return Optional.of(product);
+                }
+            }
+            return Optional.empty();
+        } catch (Exception e) {
+            log.error("Tangbuy mall findById failed candidateId={}", candidateId, e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Map one pageInfo row. Returns null when status is present and not {@code ON}, or when itemId
+     * is missing.
+     */
+    static TangbuyCatalogProduct fromMallRow(JSONObject row) {
+        if (row == null) {
+            return null;
+        }
+        String status = StringUtils.trimToNull(row.getString("status"));
+        if (status != null && !"ON".equalsIgnoreCase(status)) {
+            return null;
+        }
+        Object rawId = row.get("itemId");
+        if (rawId == null) {
+            return null;
+        }
+        String candidateId = String.valueOf(rawId).trim();
+        if (candidateId.isEmpty() || "null".equals(candidateId)) {
+            return null;
+        }
+
+        String imageUrl = null;
+        JSONArray images = row.getJSONArray("imageList");
+        if (images != null && !images.isEmpty()) {
+            imageUrl = StringUtils.trimToNull(images.getString(0));
+        }
+
+        BigDecimal price = row.getBigDecimal("price");
+
+        return new TangbuyCatalogProduct()
+                .setCandidateId(candidateId)
+                .setTangbuyProductId(candidateId)
+                .setTitle(row.getString("itemName"))
+                .setPrice(price)
+                .setCurrency(DEFAULT_CURRENCY)
+                .setImageUrl(imageUrl)
+                .setTangbuyUrl(StringUtils.trimToNull(row.getString("detailUrl")))
+                .setUrl1688(null)
+                .setOfferId1688(null)
+                .setSkuId(null)
+                .setFrontSkuId(null)
+                .setSkuAttr(null)
+                .setSupplierShop(StringUtils.trimToNull(row.getString("providerShopName")))
+                .setUpstreamPlatform(StringUtils.trimToNull(row.getString("dataSource")))
+                .setBarcode(null);
+    }
+
+    /** Prefer numeric Long for itemIdList; fall back to the raw string if not parseable. */
+    private static Object parseItemId(String candidateId) {
+        try {
+            return Long.parseLong(candidateId);
+        } catch (NumberFormatException e) {
+            return candidateId;
+        }
+    }
+
+    private void loadOfflineJson() {
         ClassPathResource resource = new ClassPathResource(CATALOG_RESOURCE);
         if (!resource.exists()) {
             log.warn("Tangbuy catalog resource not found path={}", CATALOG_RESOURCE);
@@ -79,43 +250,10 @@ public class TangbuyCatalogService {
             index.putIfAbsent(candidateId, loaded.get(loaded.size() - 1));
         }
 
-        this.catalog = Collections.unmodifiableList(loaded);
-        this.byId = Collections.unmodifiableMap(index);
-        log.info("Tangbuy catalog loaded count={} discarded={} path={}", loaded.size(), discarded, CATALOG_RESOURCE);
-    }
-
-    /**
-     * First {@code limit} entries in source order. limit defaults to 40, is capped at 100, and any
-     * non-positive value falls back to the default.
-     */
-    public List<TangbuyCatalogProduct> list(Integer limit) {
-        return list(0, limit);
-    }
-
-    /**
-     * A page of {@code limit} entries starting at {@code offset} (source order). offset defaults to 0
-     * (negatives clamp to 0); limit defaults to 40 and is capped at 100 per page. Returns an empty list
-     * when offset is past the end.
-     */
-    public List<TangbuyCatalogProduct> list(Integer offset, Integer limit) {
-        int from = (offset == null || offset < 0) ? 0 : offset;
-        if (from >= catalog.size()) {
-            return List.of();
-        }
-        int pageSize = (limit == null || limit <= 0) ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
-        int to = Math.min(from + pageSize, catalog.size());
-        return catalog.subList(from, to);
-    }
-
-    public Optional<TangbuyCatalogProduct> findById(String candidateId) {
-        if (StringUtils.isBlank(candidateId)) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(byId.get(candidateId));
-    }
-
-    public int size() {
-        return catalog.size();
+        this.offlineCatalog = Collections.unmodifiableList(loaded);
+        this.offlineById = Collections.unmodifiableMap(index);
+        log.info("Tangbuy catalog loaded offline count={} discarded={} path={}",
+                loaded.size(), discarded, CATALOG_RESOURCE);
     }
 
     /**
