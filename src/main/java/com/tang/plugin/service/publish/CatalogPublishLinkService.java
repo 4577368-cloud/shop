@@ -54,20 +54,22 @@ public class CatalogPublishLinkService {
     private TxManger txManger;
 
     /**
-     * Link a freshly published catalog product to its source. Returns true when a binding was written,
-     * false when skipped (missing variant GID, or the variant already has a live binding).
+     * Link a freshly published catalog product to its source. Returns true when a binding was written
+     * (new or replacing a non-publish binding); false when skipped (missing keys, or already
+     * {@code FROM_PUBLISH}).
      */
     public boolean linkPublished(String shopName, TangbuyCatalogProduct candidate,
                                  String shopifyProductGid, String shopifyVariantGid) {
         if (candidate == null) {
             return false;
         }
-        return link(shopName, shopifyProductGid, shopifyVariantGid,
+        LinkOutcome outcome = link(shopName, shopifyProductGid, shopifyVariantGid,
                 firstNonBlank(candidate.getOfferId1688(), candidate.getTangbuyProductId(), candidate.getCandidateId()),
                 firstNonBlank(candidate.getSkuId(), candidate.getOfferId1688(), candidate.getCandidateId()),
                 candidate.getImageUrl(),
                 candidate.getPrice(),
                 firstNonBlank(candidate.getTangbuyUrl(), candidate.getUrl1688()));
+        return outcome == LinkOutcome.LINKED || outcome == LinkOutcome.REPLACED;
     }
 
     /**
@@ -99,12 +101,13 @@ public class CatalogPublishLinkService {
                 String skuId = firstNonBlank(record.getSkuId(), offerId);
                 String detailUrl = catalog != null
                         ? firstNonBlank(catalog.getTangbuyUrl(), catalog.getUrl1688()) : null;
-                boolean linked = link(shopName, record.getShopifyProductId(), record.getShopifyVariantId(),
+                LinkOutcome outcome = link(shopName, record.getShopifyProductId(), record.getShopifyVariantId(),
                         offerId, skuId, image, price, detailUrl);
-                if (linked) {
-                    result.linked++;
-                } else {
-                    result.alreadyLinked++;
+                switch (outcome) {
+                    case LINKED -> result.linked++;
+                    case REPLACED -> result.replaced++;
+                    case ALREADY -> result.alreadyLinked++;
+                    case SKIPPED -> result.skipped++;
                 }
             } catch (Exception e) {
                 result.failed++;
@@ -116,15 +119,23 @@ public class CatalogPublishLinkService {
         return result;
     }
 
-    private boolean link(String shopName, String productGid, String variantGid, String tangbuyProductId,
-                         String tangbuySkuId, String imageUrl, BigDecimal price, String detailUrl) {
+    /**
+     * Write (or repair) the authoritative 1:1 catalog binding for a published Shopify variant.
+     *
+     * <p>Catalog publish is the source of truth: if the variant already has a live
+     * {@code FROM_PUBLISH} binding we leave it alone; if it has a wrong image-search /
+     * manual binding (e.g. fake offer {@code 990022}), we overwrite it with the catalog snapshot.
+     */
+    private LinkOutcome link(String shopName, String productGid, String variantGid, String tangbuyProductId,
+                             String tangbuySkuId, String imageUrl, BigDecimal price, String detailUrl) {
         if (StringUtils.isAnyBlank(shopName, variantGid, tangbuyProductId, tangbuySkuId)) {
-            return false;
+            return LinkOutcome.SKIPPED;
         }
-        // Never clobber an existing live (ACTIVE/PENDING) binding on this variant.
-        if (shopProductBindingRepository.findBindableBySkuId(shopName, variantGid).isPresent()) {
-            return false;
+        var existing = shopProductBindingRepository.findBindableBySkuId(shopName, variantGid);
+        if (existing.isPresent() && BIND_SOURCE_FROM_PUBLISH.equals(existing.get().getBindSource())) {
+            return LinkOutcome.ALREADY;
         }
+        boolean replacing = existing.isPresent();
         String priceStr = price == null ? null : price.stripTrailingZeros().toPlainString();
         // imageSource/querySource intentionally empty: this is a 1:1 catalog link, not an image search.
         String matchReason = ImageMatchReason.encode(null, null, null, detailUrl, imageUrl, priceStr);
@@ -154,11 +165,13 @@ public class CatalogPublishLinkService {
                     .setCandidateId(candidateId)
                     .setBindStatus(BindingStatus.ACTIVE);
             shopProductBindingRepository.upsertActive(binding);
-            log.info("Catalog publish link shopName={} productGid={} variantGid={} offerId={} candidateId={}",
-                    shopName, productGid, variantGid, tangbuyProductId, candidateId);
+            log.info("Catalog publish {} shopName={} productGid={} variantGid={} offerId={} candidateId={}",
+                    replacing ? "REPLACE" : "LINK", shopName, productGid, variantGid, tangbuyProductId, candidateId);
         });
-        return true;
+        return replacing ? LinkOutcome.REPLACED : LinkOutcome.LINKED;
     }
+
+    private enum LinkOutcome { LINKED, REPLACED, ALREADY, SKIPPED }
 
     private static String firstNonBlank(String... values) {
         for (String v : values) {
@@ -175,6 +188,8 @@ public class CatalogPublishLinkService {
     public static class BackfillResult {
         private int total;
         private int linked;
+        /** Wrong image-search/manual bindings overwritten by catalog 1:1 truth. */
+        private int replaced;
         private int alreadyLinked;
         private int skipped;
         private int failed;
