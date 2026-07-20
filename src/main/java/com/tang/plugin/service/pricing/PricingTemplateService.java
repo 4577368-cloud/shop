@@ -102,6 +102,19 @@ public class PricingTemplateService {
         return saved;
     }
 
+    /**
+     * Soft-delete the shop's stored template so GET falls back to the system default
+     * ({@code isDefault = true}). Used to re-enter first-time pricing setup.
+     */
+    public PricingTemplate clear(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            throw new CustomException("pricing template clear requires shopName");
+        }
+        pricingTemplateRepository.softDeleteByShop(shopName.trim());
+        log.info("Pricing template cleared shopName={}", shopName.trim());
+        return getEffective(shopName.trim());
+    }
+
     public PricingTemplateVO toVO(PricingTemplate template) {
         return new PricingTemplateVO()
                 .setShopName(template.getShopName())

@@ -7,6 +7,7 @@ import com.tang.plugin.service.pricing.PricingTemplateService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -38,5 +39,13 @@ public class PricingController {
     @PostMapping("/template")
     public PricingTemplateVO upsertTemplate(@RequestBody PricingTemplateUpsertRequest request) {
         return pricingTemplateService.toVO(pricingTemplateService.upsert(request));
+    }
+
+    @DeleteMapping("/template")
+    public PricingTemplateVO clearTemplate(@RequestParam("shopName") String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            throw new CustomException("template requires shopName");
+        }
+        return pricingTemplateService.toVO(pricingTemplateService.clear(shopName));
     }
 }

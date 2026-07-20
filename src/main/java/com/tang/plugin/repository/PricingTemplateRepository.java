@@ -113,6 +113,22 @@ public class PricingTemplateRepository {
         return findByShop(template.getShopName()).orElseThrow();
     }
 
+    /** Soft-delete active row(s) for a shop so getEffective returns the system default. */
+    public void softDeleteByShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return;
+        }
+        Instant now = Instant.now();
+        jdbcTemplate.update(
+                """
+                UPDATE pricing_template
+                SET del_flag = 1, updated_at = ?
+                WHERE shop_name = ? AND del_flag = 0
+                """,
+                Timestamp.from(now),
+                shopName);
+    }
+
     private static Instant toInstant(Timestamp ts) {
         return ts == null ? null : ts.toInstant();
     }

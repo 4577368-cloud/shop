@@ -27,7 +27,7 @@ public class CorsConfig {
     public FilterRegistrationBean<CorsFilter> corsFilterRegistration() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(allowedOrigins);
-        config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Content-Type", "Accept", "X-Internal-Token"));
         config.setMaxAge(3600L);
 
