@@ -32,7 +32,7 @@ import java.util.Optional;
 public class TangbuyCatalogService {
 
     private static final String CATALOG_RESOURCE = "tangbuy-catalog/test-products.json";
-    private static final int DEFAULT_LIMIT = 40;
+    private static final int DEFAULT_LIMIT = 30;
     private static final int MAX_LIMIT = 100;
     private static final String DEFAULT_CURRENCY = "CNY";
 
@@ -54,7 +54,7 @@ public class TangbuyCatalogService {
     }
 
     /**
-     * First {@code limit} entries in source order. limit defaults to 40, is capped at 100, and any
+     * First {@code limit} entries in source order. limit defaults to 30, is capped at 100, and any
      * non-positive value falls back to the default.
      */
     public List<TangbuyCatalogProduct> list(Integer limit) {
@@ -63,7 +63,7 @@ public class TangbuyCatalogService {
 
     /**
      * A page of {@code limit} entries starting at {@code offset} (source order). offset defaults to 0
-     * (negatives clamp to 0); limit defaults to 40 and is capped at 100 per page. Returns an empty list
+     * (negatives clamp to 0); limit defaults to 30 and is capped at 100 per page. Returns an empty list
      * when offset is past the end.
      */
     public List<TangbuyCatalogProduct> list(Integer offset, Integer limit) {
