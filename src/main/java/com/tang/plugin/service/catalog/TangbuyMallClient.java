@@ -71,12 +71,18 @@ public class TangbuyMallClient {
     }
 
     private PageInfoResult pageInfoGateway(int pageNum, int pageSize, List<Object> itemIdList) {
+        String keywords = "";
+        if (itemIdList != null && itemIdList.size() == 1) {
+            // Best-effort lookup when resolving one catalog id (publish/detail).
+            keywords = String.valueOf(itemIdList.get(0)).trim();
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("pageNum", pageNum);
         body.put("pageSize", pageSize);
-        if (itemIdList != null && !itemIdList.isEmpty()) {
-            body.put("itemIdList", itemIdList);
-        }
+        body.put("subscriptionPalletIds", List.of());
+        body.put("labelIdList", List.of());
+        body.put("keywords", keywords);
 
         String url = StringUtils.removeEnd(StringUtils.trimToEmpty(properties.getGatewayBaseUrl()), "/")
                 + GATEWAY_SEARCH_PATH;
