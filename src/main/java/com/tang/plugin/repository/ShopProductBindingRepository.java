@@ -94,6 +94,99 @@ public class ShopProductBindingRepository {
     }
 
     /**
+     * Deactivate all live bindings for a Shopify product (by item GID). Also clears legacy rows that
+     * only recorded the variant GID. Returns total affected rows.
+     */
+    public int deactivateByItem(String shopName, String thirdPlatformItemId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) {
+            return 0;
+        }
+        Instant now = Instant.now();
+        Timestamp ts = Timestamp.from(now);
+        int byItem = jdbcTemplate.update(
+                """
+                UPDATE shop_product_binding
+                SET bind_status = ?, del_flag = 1, updated_at = ?
+                WHERE shop_name = ? AND third_platform_item_id = ?
+                  AND bind_status IN (?, ?) AND del_flag = 0
+                """,
+                BindingStatus.INACTIVE.name(),
+                ts,
+                shopName,
+                thirdPlatformItemId,
+                BindingStatus.ACTIVE.name(),
+                BindingStatus.PENDING.name());
+        int bySku = jdbcTemplate.update(
+                """
+                UPDATE shop_product_binding b
+                SET bind_status = ?, del_flag = 1, updated_at = ?
+                WHERE b.shop_name = ? AND b.del_flag = 0 AND b.bind_status IN (?, ?)
+                  AND (b.third_platform_item_id IS NULL OR b.third_platform_item_id = '')
+                  AND EXISTS (
+                    SELECT 1 FROM third_platform_sku s
+                    WHERE s.shop_name = b.shop_name
+                      AND s.third_platform_sku_id = b.third_platform_sku_id
+                      AND s.third_platform_item_id = ?
+                  )
+                """,
+                BindingStatus.INACTIVE.name(),
+                ts,
+                shopName,
+                BindingStatus.ACTIVE.name(),
+                BindingStatus.PENDING.name(),
+                thirdPlatformItemId);
+        int rows = byItem + bySku;
+        if (rows > 0) {
+            log.info("Bindings deactivated by item shopName={} itemId={} rows={}",
+                    shopName, thirdPlatformItemId, rows);
+        }
+        return rows;
+    }
+
+    /**
+     * Deactivate live bindings whose product mirror is gone (repair after deletes that skipped binding cleanup).
+     */
+    public int deactivateOrphansForShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return 0;
+        }
+        Timestamp ts = Timestamp.from(Instant.now());
+        int rows = jdbcTemplate.update(
+                """
+                UPDATE shop_product_binding b
+                SET bind_status = ?, del_flag = 1, updated_at = ?
+                WHERE b.shop_name = ? AND b.del_flag = 0 AND b.bind_status IN (?, ?)
+                  AND (
+                    (b.third_platform_item_id IS NOT NULL AND b.third_platform_item_id <> ''
+                     AND NOT EXISTS (
+                       SELECT 1 FROM third_platform_product p
+                       WHERE p.shop_name = b.shop_name
+                         AND p.third_platform_item_id = b.third_platform_item_id
+                         AND p.del_flag = 0
+                     ))
+                    OR
+                    ((b.third_platform_item_id IS NULL OR b.third_platform_item_id = '')
+                     AND b.third_platform_sku_id IS NOT NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM third_platform_sku s
+                       WHERE s.shop_name = b.shop_name
+                         AND s.third_platform_sku_id = b.third_platform_sku_id
+                         AND s.del_flag = 0
+                     ))
+                  )
+                """,
+                BindingStatus.INACTIVE.name(),
+                ts,
+                shopName,
+                BindingStatus.ACTIVE.name(),
+                BindingStatus.PENDING.name());
+        if (rows > 0) {
+            log.info("Orphan bindings deactivated shopName={} rows={}", shopName, rows);
+        }
+        return rows;
+    }
+
+    /**
      * Deactivate the current live binding of a SKU (soft), whether ACTIVE or PENDING. Returns affected rows.
      */
     public int deactivateBySkuId(String shopName, String thirdPlatformSkuId) {

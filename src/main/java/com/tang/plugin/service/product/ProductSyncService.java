@@ -8,6 +8,7 @@ import com.tang.plugin.domain.entity.product.ThirdPlatformProductMedia;
 import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.enums.PluginType;
+import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ThirdPlatformProductMediaRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
@@ -49,6 +50,8 @@ public class ProductSyncService {
     @Resource
     private ProductMirrorDeleteService productMirrorDeleteService;
     @Resource
+    private ShopProductBindingRepository shopProductBindingRepository;
+    @Resource
     private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ShopifyWebhookComponent shopifyWebhookComponent;
@@ -88,6 +91,7 @@ public class ProductSyncService {
 
         if (fullSync) {
             reconcileDeleted(shopName, result);
+            shopProductBindingRepository.deactivateOrphansForShop(shopName);
             ensureWebhooksRegistered(shopName);
         }
     }

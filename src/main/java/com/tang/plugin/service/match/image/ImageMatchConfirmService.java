@@ -164,8 +164,12 @@ public class ImageMatchConfirmService {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("listActiveBindings requires shopName");
         }
+        shopProductBindingRepository.deactivateOrphansForShop(shopName);
         List<ImageBindingView> views = new ArrayList<>();
         for (ShopProductBinding binding : shopProductBindingRepository.listBindableByShop(shopName)) {
+            if (!bindingTargetsActiveProduct(shopName, binding)) {
+                continue;
+            }
             BigDecimal score = null;
             ImageMatchReason.Decoded reason = ImageMatchReason.decode(null);
             if (binding.getCandidateId() != null) {
@@ -181,6 +185,20 @@ public class ImageMatchConfirmService {
                     score, reason, binding.getBindStatus(), binding.getBindSource()));
         }
         return views;
+    }
+
+    /** Skip bindings whose Shopify product mirror was soft-deleted (orphan rows). */
+    private boolean bindingTargetsActiveProduct(String shopName, ShopProductBinding binding) {
+        String itemId = binding.getThirdPlatformItemId();
+        if (StringUtils.isBlank(itemId)) {
+            itemId = thirdPlatformSkuRepository
+                    .findItemIdBySkuId(shopName, binding.getThirdPlatformSkuId())
+                    .orElse(null);
+        }
+        if (StringUtils.isBlank(itemId)) {
+            return false;
+        }
+        return thirdPlatformProductRepository.findActiveByShopAndItem(shopName, itemId).isPresent();
     }
 
     private void requireProductExists(String shopName, String itemId) {

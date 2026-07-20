@@ -106,6 +106,19 @@ class SkuBindingOverviewServiceTest {
     }
 
     @Test
+    void overview_skipsOrphanBindingWhenProductMirrorDeleted() {
+        seedTwoVariantProduct();
+        confirmService.confirm(new ConfirmImageMatchDTO()
+                .setShopName(SHOP).setThirdPlatformItemId(ITEM).setOfferProductId("777"));
+        assertEquals(1, service.overview(SHOP).size());
+
+        productRepository.softDelete(SHOP, ITEM);
+        skuRepository.softDeleteByItem(SHOP, ITEM);
+
+        assertTrue(service.overview(SHOP).isEmpty());
+    }
+
+    @Test
     void optionLabel_fallsBackToSkuThenGeneric() {
         productRepository.upsert(new ThirdPlatformProduct()
                 .setShopName(SHOP).setShopType("SHOPIFY").setThirdPlatformItemId(ITEM).setTitle("P"));

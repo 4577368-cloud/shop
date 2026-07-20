@@ -51,6 +51,7 @@ public class SkuBindingOverviewService {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("overview requires shopName");
         }
+        shopProductBindingRepository.deactivateOrphansForShop(shopName);
         List<ShopProductBinding> bindings = shopProductBindingRepository.listBindableByShop(shopName);
         if (bindings.isEmpty()) {
             return List.of();
@@ -84,6 +85,10 @@ public class SkuBindingOverviewService {
         List<SkuProductOverviewVO> result = new ArrayList<>();
         for (String itemId : itemIds) {
             ThirdPlatformProduct product = productByItemId.get(itemId);
+            if (product == null) {
+                // Orphan binding: product mirror was deleted in Shopify; skip until cleanup runs.
+                continue;
+            }
             List<ThirdPlatformSku> variants = thirdPlatformSkuRepository.listByItem(shopName, itemId);
             List<SkuVariantVO> variantVos = new ArrayList<>();
             for (ThirdPlatformSku sku : variants) {

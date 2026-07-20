@@ -1,6 +1,7 @@
 package com.tang.plugin.service.product;
 
 import com.tang.plugin.config.TxManger;
+import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ThirdPlatformProductMediaRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
@@ -23,6 +24,8 @@ public class ProductMirrorDeleteService {
     @Resource
     private ThirdPlatformProductMediaRepository thirdPlatformProductMediaRepository;
     @Resource
+    private ShopProductBindingRepository shopProductBindingRepository;
+    @Resource
     private TxManger txManger;
 
     /**
@@ -34,6 +37,7 @@ public class ProductMirrorDeleteService {
         }
         boolean[] deleted = {false};
         txManger.run(() -> {
+            shopProductBindingRepository.deactivateByItem(shopName, productGid);
             int n = thirdPlatformProductRepository.softDelete(shopName, productGid);
             thirdPlatformSkuRepository.softDeleteByItem(shopName, productGid);
             thirdPlatformProductMediaRepository.softDeleteByItem(shopName, productGid);
