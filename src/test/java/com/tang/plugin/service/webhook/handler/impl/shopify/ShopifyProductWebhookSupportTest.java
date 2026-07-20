@@ -6,25 +6,25 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-class ShopifyProductDeletedHandlerTest {
+class ShopifyProductWebhookSupportTest {
 
     @Test
     void resolveProductGid_prefersAdminGraphqlId() {
         JSONObject payload = new JSONObject();
         payload.put("id", 123);
         payload.put("admin_graphql_api_id", "gid://shopify/Product/999");
-        assertEquals("gid://shopify/Product/999", ShopifyProductDeletedHandler.resolveProductGid(payload));
+        assertEquals("gid://shopify/Product/999", ShopifyProductWebhookSupport.resolveProductGid(payload));
     }
 
     @Test
     void resolveProductGid_fallsBackToNumericId() {
         JSONObject payload = new JSONObject();
         payload.put("id", 456789);
-        assertEquals("gid://shopify/Product/456789", ShopifyProductDeletedHandler.resolveProductGid(payload));
+        assertEquals("gid://shopify/Product/456789", ShopifyProductWebhookSupport.resolveProductGid(payload));
     }
 
     @Test
     void resolveProductGid_nullPayload() {
-        assertNull(ShopifyProductDeletedHandler.resolveProductGid(null));
+        assertNull(ShopifyProductWebhookSupport.resolveProductGid(null));
     }
 }

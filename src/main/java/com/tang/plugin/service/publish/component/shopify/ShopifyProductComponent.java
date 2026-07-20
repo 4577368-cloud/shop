@@ -32,53 +32,68 @@ public class ShopifyProductComponent {
                 }
                 edges {
                   node {
+                    ...ProductMirrorFields
+                  }
+                }
+              }
+            }
+            """;
+
+    private static final String PRODUCT_BY_ID = """
+            query ProductById($id: ID!, $variantsFirst: Int!, $mediaFirst: Int!) {
+              product(id: $id) {
+                ...ProductMirrorFields
+              }
+            }
+            """;
+
+    /** Shared selection set for list + single-product pulls (must stay in sync with the adapter). */
+    private static final String PRODUCT_MIRROR_FIELDS = """
+            fragment ProductMirrorFields on Product {
+              id
+              handle
+              title
+              descriptionHtml
+              status
+              updatedAt
+              featuredImage {
+                url
+                altText
+              }
+              options {
+                name
+                position
+                values
+              }
+              media(first: $mediaFirst) {
+                pageInfo { hasNextPage }
+                edges {
+                  node {
+                    ... on MediaImage {
+                      id
+                      image { url altText }
+                    }
+                  }
+                }
+              }
+              variants(first: $variantsFirst) {
+                pageInfo { hasNextPage }
+                edges {
+                  node {
                     id
-                    handle
+                    sku
                     title
-                    descriptionHtml
-                    status
-                    updatedAt
-                    featuredImage {
-                      url
-                      altText
-                    }
-                    options {
-                      name
-                      position
-                      values
-                    }
-                    media(first: $mediaFirst) {
-                      pageInfo { hasNextPage }
-                      edges {
-                        node {
-                          ... on MediaImage {
-                            id
-                            image { url altText }
-                          }
-                        }
-                      }
-                    }
-                    variants(first: $variantsFirst) {
-                      pageInfo { hasNextPage }
-                      edges {
-                        node {
-                          id
-                          sku
-                          title
-                          price
-                          position
-                          selectedOptions { name value }
-                          image { url }
-                          barcode
-                          inventoryQuantity
-                          inventoryItem {
-                            measurement {
-                              weight {
-                                value
-                                unit
-                              }
-                            }
-                          }
+                    price
+                    position
+                    selectedOptions { name value }
+                    image { url }
+                    barcode
+                    inventoryQuantity
+                    inventoryItem {
+                      measurement {
+                        weight {
+                          value
+                          unit
                         }
                       }
                     }
@@ -119,7 +134,7 @@ public class ShopifyProductComponent {
             variables.put("mediaFirst", cfg.getMediaFirst());
 
             JSONObject response = shopifyGraphqlClient.execute(
-                    shopName, shopDomain, accessToken, PRODUCTS_BY_UPDATED_AT, variables);
+                    shopName, shopDomain, accessToken, withProductFragment(PRODUCTS_BY_UPDATED_AT), variables);
             JSONObject data = response.getJSONObject("data");
             if (data == null) {
                 throw new CustomException("Shopify products data null, shopName=" + shopName);
@@ -162,6 +177,41 @@ public class ShopifyProductComponent {
         log.info("Shopify fetchProducts done shopName={} fetched={} pages={} truncated={}",
                 shopName, products.size(), page, truncated);
         return new ProductFetchResult(products, truncated);
+    }
+
+    /**
+     * Fetch one product by Admin GraphQL GID for webhook create/update upsert.
+     *
+     * @return product node, or {@code null} when Shopify returns no product (already deleted).
+     */
+    public JSONObject fetchProductById(String shopName, String shopDomain, String accessToken, String productGid) {
+        if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken, productGid)) {
+            throw new CustomException("Shopify fetchProductById missing credentials/id, shopName=" + shopName);
+        }
+        ShopifyProperties.Product cfg = shopifyProperties.getProduct();
+        JSONObject variables = new JSONObject();
+        variables.put("id", productGid);
+        variables.put("variantsFirst", cfg.getVariantsFirst());
+        variables.put("mediaFirst", cfg.getMediaFirst());
+
+        JSONObject response = shopifyGraphqlClient.execute(
+                shopName, shopDomain, accessToken, withProductFragment(PRODUCT_BY_ID), variables);
+        JSONObject data = response.getJSONObject("data");
+        if (data == null) {
+            throw new CustomException("Shopify product-by-id data null, shopName=" + shopName
+                    + ", productGid=" + productGid);
+        }
+        JSONObject node = data.getJSONObject("product");
+        if (node == null) {
+            log.warn("Shopify product-by-id empty shopName={} productGid={}", shopName, productGid);
+            return null;
+        }
+        warnIfTruncated(shopName, node);
+        return node;
+    }
+
+    private static String withProductFragment(String query) {
+        return query + "\n" + PRODUCT_MIRROR_FIELDS;
     }
 
     /**

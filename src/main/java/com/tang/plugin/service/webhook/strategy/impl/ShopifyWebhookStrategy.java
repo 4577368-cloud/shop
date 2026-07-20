@@ -50,10 +50,6 @@ public class ShopifyWebhookStrategy {
                     shopDomain, topic, webhookId);
             return;
         }
-        if (event == ShopifyWebhookEventEnum.PRODUCTS_UPDATE) {
-            log.info("Shopify products/update skeleton ignore shopDomain={} webhookId={}", shopDomain, webhookId);
-            return;
-        }
 
         String payload = new String(rawBody, StandardCharsets.UTF_8);
         List<ShopifyWebhookEventHandler> handlers = handlerProvider.orderedStream().toList();

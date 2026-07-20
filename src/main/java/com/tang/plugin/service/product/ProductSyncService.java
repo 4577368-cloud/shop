@@ -92,6 +92,16 @@ public class ProductSyncService {
         }
     }
 
+    /**
+     * Upsert one mirrored product (SPU + SKUs + media). Used by product webhooks and tests.
+     */
+    public void upsertOne(ThirdPlatformProduct product, List<ThirdPlatformSku> skus) {
+        if (product == null || StringUtils.isBlank(product.getThirdPlatformItemId())) {
+            return;
+        }
+        persistOne(product, skus == null ? List.of() : skus);
+    }
+
     private void persist(String shopName, SyncThirdPartyPlatformProductDTO result) {
         if (result == null || CollectionUtils.isEmpty(result.getThirdPlatformProductList())) {
             log.info("Product sync nothing to persist shopName={}", shopName);

@@ -4,16 +4,18 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Shopify webhook topics. products/update kept for extension but not registered by default.
+ * Shopify webhook topics registered on OAuth when {@code registerOnAuth} is true.
  */
 public enum ShopifyWebhookEventEnum {
     ORDERS_CREATE("orders/create", "ORDERS_CREATE", true),
     ORDERS_UPDATED("orders/updated", "ORDERS_UPDATED", true),
     APP_UNINSTALLED("app/uninstalled", "APP_UNINSTALLED", true),
+    /** Upsert local product mirror when a product is created in Shopify Admin. */
+    PRODUCTS_CREATE("products/create", "PRODUCTS_CREATE", true),
+    /** Upsert local product mirror when a product is updated in Shopify Admin. */
+    PRODUCTS_UPDATE("products/update", "PRODUCTS_UPDATE", true),
     /** Soft-delete local product mirror when a product is removed in Shopify Admin. */
-    PRODUCTS_DELETE("products/delete", "PRODUCTS_DELETE", true),
-    /** Skeleton only — phase-2 does not register */
-    PRODUCTS_UPDATE("products/update", "PRODUCTS_UPDATE", false);
+    PRODUCTS_DELETE("products/delete", "PRODUCTS_DELETE", true);
 
     private final String topic;
     private final String graphqlTopic;
