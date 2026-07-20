@@ -3,6 +3,7 @@ package com.tang.plugin.domain.dto.publish;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /** Request body for POST /api/plugin/catalog/publish. Single candidate, no batch. */
 @Data
@@ -19,6 +20,8 @@ public class PublishRequest {
     private BigDecimal price;
     private String currency;
     private String imageUrl;
+    /** Full gallery from Tangbuy list {@code itemImages}; preferred over {@link #imageUrl}. */
+    private List<String> imageUrls;
     private String tangbuyUrl;
     private String supplierShop;
     private String upstreamPlatform;

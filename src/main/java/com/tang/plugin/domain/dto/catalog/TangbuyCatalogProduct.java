@@ -4,6 +4,7 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * In-memory model of one Tangbuy offline catalog entry (mirrors test-products.json).
@@ -19,6 +20,8 @@ public class TangbuyCatalogProduct {
     private BigDecimal price;
     private String currency;
     private String imageUrl;
+    /** Product gallery URLs (Tangbuy {@code itemImages}); first entry mirrors {@link #imageUrl}. */
+    private List<String> imageUrls;
     private String tangbuyUrl;
     private String url1688;
     private String offerId1688;

@@ -20,7 +20,9 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Orchestrates publishing one Tangbuy catalog candidate into a new sellable Shopify product,
@@ -103,7 +105,7 @@ public class CatalogPublishService {
             ShopifyCreateProductResult created = shopifyProductPublishComponent.createSellableProduct(
                     shopName, auth.getShopDomain(), auth.getAccessToken(),
                     candidate.getTitle(), salePrice, sanitizeSku(candidateId), candidate.getBarcode(),
-                    buildDescriptionHtml(candidate), candidate.getImageUrl());
+                    buildDescriptionHtml(candidate), resolveImageUrls(candidate));
 
             productPublishRecordService.markPublished(record.getId(), created.getProductId(),
                     created.getHandle(), created.getVariantId(), created.getInventoryItemId());
@@ -140,19 +142,47 @@ public class CatalogPublishService {
         String candidateId = request.getCandidateId().trim();
         if (StringUtils.isNotBlank(request.getTitle())) {
             String currency = StringUtils.trimToNull(request.getCurrency());
+            List<String> imageUrls = normalizeImageUrls(request.getImageUrls(), request.getImageUrl());
             return new TangbuyCatalogProduct()
                     .setCandidateId(candidateId)
                     .setTangbuyProductId(candidateId)
                     .setTitle(request.getTitle().trim())
                     .setPrice(request.getPrice())
                     .setCurrency(currency == null ? "CNY" : currency)
-                    .setImageUrl(StringUtils.trimToNull(request.getImageUrl()))
+                    .setImageUrl(imageUrls.isEmpty() ? null : imageUrls.get(0))
+                    .setImageUrls(imageUrls.isEmpty() ? null : imageUrls)
                     .setTangbuyUrl(StringUtils.trimToNull(request.getTangbuyUrl()))
                     .setSupplierShop(StringUtils.trimToNull(request.getSupplierShop()))
                     .setUpstreamPlatform(StringUtils.trimToNull(request.getUpstreamPlatform()));
         }
         return tangbuyCatalogService.findById(candidateId)
                 .orElseThrow(() -> new CustomException("candidate not found, candidateId=" + candidateId));
+    }
+
+    private static List<String> resolveImageUrls(TangbuyCatalogProduct candidate) {
+        return normalizeImageUrls(candidate.getImageUrls(), candidate.getImageUrl());
+    }
+
+    private static List<String> normalizeImageUrls(List<String> imageUrls, String imageUrl) {
+        List<String> out = new ArrayList<>();
+        if (imageUrls != null) {
+            for (String u : imageUrls) {
+                String trimmed = StringUtils.trimToNull(u);
+                if (trimmed != null && (trimmed.startsWith("http://") || trimmed.startsWith("https://"))
+                        && !out.contains(trimmed)) {
+                    out.add(trimmed);
+                    if (out.size() >= 10) {
+                        return List.copyOf(out);
+                    }
+                }
+            }
+        }
+        String single = StringUtils.trimToNull(imageUrl);
+        if (single != null && (single.startsWith("http://") || single.startsWith("https://"))
+                && !out.contains(single)) {
+            out.add(single);
+        }
+        return List.copyOf(out);
     }
 
     private ProductPublishRecord snapshot(String shopName, TangbuyCatalogProduct candidate,
@@ -203,14 +233,20 @@ public class CatalogPublishService {
     }
 
     /**
-     * Minimal product description from the candidate: 规格 (sku_attr), 供应商 (supplier_shop),
-     * 货源平台 (upstream_platform). Values are HTML-escaped. Returns null when all fields are blank.
+     * Product description from the candidate: 规格 / 供应商 / 货源平台 / Tangbuy 链接.
+     * Values are HTML-escaped. Returns null when all fields are blank.
      */
     private static String buildDescriptionHtml(TangbuyCatalogProduct c) {
         StringBuilder sb = new StringBuilder();
         appendLine(sb, "规格", c.getSkuAttr());
         appendLine(sb, "供应商", c.getSupplierShop());
         appendLine(sb, "货源平台", c.getUpstreamPlatform());
+        if (StringUtils.isNotBlank(c.getTangbuyUrl())) {
+            String url = c.getTangbuyUrl().trim();
+            sb.append("<p>货源链接：<a href=\"").append(escapeHtml(url))
+                    .append("\" target=\"_blank\" rel=\"noopener noreferrer\">")
+                    .append(escapeHtml(url)).append("</a></p>");
+        }
         return sb.length() == 0 ? null : sb.toString();
     }
 

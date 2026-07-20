@@ -12,19 +12,21 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
  * Shopify product create component — GraphQL only. Creates one minimal sellable product via a single
  * {@code productSet(synchronous:true)} call: product (ACTIVE) + one default option + one variant with
  * price, sku, optional barcode and inventory NOT tracked (always purchasable). Optionally enriches
- * with a descriptionHtml and one primary image (M1-4.1). No inventory quantities, no multi-variant.
+ * with a descriptionHtml and a gallery of images (M1-4.1). No inventory quantities, no multi-variant.
  *
  * <p>Success is judged strictly: top-level errors empty (enforced by {@link ShopifyGraphqlClient}),
  * userErrors empty, product present, first variant present, and both variant id and inventoryItem id
  * present. Any miss throws so the caller takes the failure path. Media is processed asynchronously by
  * Shopify and is intentionally NOT part of the success gate, so a failed/late image never blocks the
- * sellable product (best-effort image).
+ * sellable product (best-effort images).
  */
 @Slf4j
 @Component
@@ -47,6 +49,7 @@ public class ShopifyProductPublishComponent {
 
     private static final String DEFAULT_OPTION_NAME = "Title";
     private static final String DEFAULT_OPTION_VALUE = "Default Title";
+    private static final int MAX_IMAGES = 10;
 
     @Resource
     private ShopifyGraphqlClient shopifyGraphqlClient;
@@ -54,7 +57,7 @@ public class ShopifyProductPublishComponent {
     public ShopifyCreateProductResult createSellableProduct(String shopName, String shopDomain,
                                                             String accessToken, String title,
                                                             BigDecimal price, String sku, String barcode,
-                                                            String descriptionHtml, String imageUrl) {
+                                                            String descriptionHtml, List<String> imageUrls) {
         if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken)) {
             throw new CustomException("Shopify create product missing credentials, shopName=" + shopName);
         }
@@ -66,7 +69,7 @@ public class ShopifyProductPublishComponent {
         }
 
         JSONObject variables = new JSONObject();
-        variables.put("input", buildInput(title, price, sku, barcode, descriptionHtml, imageUrl));
+        variables.put("input", buildInput(title, price, sku, barcode, descriptionHtml, imageUrls));
 
         JSONObject response = shopifyGraphqlClient.execute(
                 shopName, shopDomain, accessToken, CREATE_SELLABLE_PRODUCT, variables);
@@ -74,7 +77,7 @@ public class ShopifyProductPublishComponent {
     }
 
     private static JSONObject buildInput(String title, BigDecimal price, String sku, String barcode,
-                                         String descriptionHtml, String imageUrl) {
+                                         String descriptionHtml, List<String> imageUrls) {
         JSONObject optionValue = new JSONObject();
         optionValue.put("name", DEFAULT_OPTION_VALUE);
         JSONObject option = new JSONObject();
@@ -107,17 +110,33 @@ public class ShopifyProductPublishComponent {
         }
         input.put("productOptions", JSONArray.of(option));
         input.put("variants", JSONArray.of(variant));
-        if (isValidImageUrl(imageUrl)) {
-            // Single primary image; processed asynchronously by Shopify (best-effort, not gated on).
+
+        List<JSONObject> files = buildImageFiles(title, imageUrls);
+        if (!files.isEmpty()) {
+            // Gallery; processed asynchronously by Shopify (best-effort, not gated on).
+            input.put("files", new JSONArray(files));
+        }
+        return input;
+    }
+
+    private static List<JSONObject> buildImageFiles(String title, List<String> imageUrls) {
+        List<JSONObject> files = new ArrayList<>();
+        if (imageUrls == null) {
+            return files;
+        }
+        for (String imageUrl : imageUrls) {
+            if (!isValidImageUrl(imageUrl) || files.size() >= MAX_IMAGES) {
+                continue;
+            }
             JSONObject file = new JSONObject();
             file.put("originalSource", imageUrl.trim());
             file.put("contentType", "IMAGE");
             if (StringUtils.isNotBlank(title)) {
                 file.put("alt", title);
             }
-            input.put("files", JSONArray.of(file));
+            files.add(file);
         }
-        return input;
+        return files;
     }
 
     private static boolean isValidImageUrl(String url) {

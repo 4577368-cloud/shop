@@ -64,6 +64,7 @@ public class TangbuyCatalogController {
                 .setCandidateId(p.getCandidateId())
                 .setTitle(p.getTitle())
                 .setImageUrl(p.getImageUrl())
+                .setImageUrls(p.getImageUrls())
                 .setPrice(p.getPrice())
                 .setCurrency(p.getCurrency())
                 .setEstimatedSalePrice(priceCalculator.calculate(p.getPrice(), template))

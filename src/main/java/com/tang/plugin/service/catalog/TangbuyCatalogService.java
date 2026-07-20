@@ -213,12 +213,23 @@ public class TangbuyCatalogService {
         }
 
         String imageUrl = null;
+        List<String> imageUrls = List.of();
         JSONArray images = row.getJSONArray("imageList");
         if (images == null || images.isEmpty()) {
             images = row.getJSONArray("itemImages");
         }
         if (images != null && !images.isEmpty()) {
-            imageUrl = StringUtils.trimToNull(images.getString(0));
+            List<String> collected = new ArrayList<>();
+            for (int i = 0; i < images.size() && collected.size() < 10; i++) {
+                String u = StringUtils.trimToNull(images.getString(i));
+                if (u != null && (u.startsWith("http://") || u.startsWith("https://"))) {
+                    collected.add(u);
+                }
+            }
+            if (!collected.isEmpty()) {
+                imageUrls = List.copyOf(collected);
+                imageUrl = collected.get(0);
+            }
         }
 
         BigDecimal price = row.getBigDecimal("price");
@@ -233,6 +244,7 @@ public class TangbuyCatalogService {
                 .setPrice(price)
                 .setCurrency(DEFAULT_CURRENCY)
                 .setImageUrl(imageUrl)
+                .setImageUrls(imageUrls.isEmpty() ? null : imageUrls)
                 .setTangbuyUrl(StringUtils.trimToNull(row.getString("detailUrl")))
                 .setUrl1688(null)
                 .setOfferId1688(null)

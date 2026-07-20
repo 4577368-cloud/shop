@@ -18,6 +18,7 @@ public class CatalogRecommendationItem {
     private String candidateId;
     private String title;
     private String imageUrl;
+    private java.util.List<String> imageUrls;
     private BigDecimal price;
     private String currency;
     private BigDecimal estimatedSalePrice;

@@ -210,13 +210,16 @@ class CatalogPublishServiceTest {
         catalogPublishService.publish(req(candidateId));
 
         ArgumentCaptor<String> descCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> imageCaptor = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<String>> imageCaptor = ArgumentCaptor.forClass(java.util.List.class);
         verify(shopifyProductPublishComponent).createSellableProduct(
                 eq(SHOP), eq(DOMAIN), eq("token-xyz"), anyString(), any(BigDecimal.class),
                 anyString(), any(), descCaptor.capture(), imageCaptor.capture());
         // First catalog entry carries sku_attr + supplier + platform and an https image_url.
         assertNotNull(descCaptor.getValue());
         assertTrue(descCaptor.getValue().contains("<p>"));
-        assertTrue(imageCaptor.getValue().startsWith("http"));
+        assertNotNull(imageCaptor.getValue());
+        assertTrue(!imageCaptor.getValue().isEmpty());
+        assertTrue(imageCaptor.getValue().get(0).startsWith("http"));
     }
 }
