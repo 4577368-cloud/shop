@@ -1,9 +1,11 @@
 package com.tang.plugin.controller.product;
 
 import com.tang.common.core.exception.CustomException;
+import com.tang.plugin.domain.dto.product.ShopProductDetailVO;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.service.product.ProductSyncService;
+import com.tang.plugin.service.product.ShopProductQueryService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -20,9 +22,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Internal integration endpoints for on-demand Shopify product sync (NOT a workbench UI).
- * Explicit manual trigger into the standardized mirror; scheduled polling stays a separate,
- * config-gated fallback. Requires the shop to hold an ACTIVE auth with read_products scope.
+ * Internal integration endpoints for on-demand Shopify product sync and mirror reads.
+ * Scheduled polling stays a separate, config-gated fallback.
  */
 @Slf4j
 @RestController
@@ -33,6 +34,8 @@ public class ProductSyncAdminController {
     private ProductSyncService productSyncService;
     @Resource
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
+    @Resource
+    private ShopProductQueryService shopProductQueryService;
 
     /**
      * Trigger a one-shot product pull from Shopify into the mirror.
@@ -65,5 +68,14 @@ public class ProductSyncAdminController {
     @GetMapping("/list")
     public List<ThirdPlatformProduct> list(@RequestParam String shopName) {
         return thirdPlatformProductRepository.listByShop(shopName);
+    }
+
+    /**
+     * Phase 1 read-only detail: SPU + variants + media from the local mirror.
+     */
+    @GetMapping("/detail")
+    public ShopProductDetailVO detail(@RequestParam String shopName,
+                                      @RequestParam String itemId) {
+        return shopProductQueryService.getDetail(shopName, itemId);
     }
 }

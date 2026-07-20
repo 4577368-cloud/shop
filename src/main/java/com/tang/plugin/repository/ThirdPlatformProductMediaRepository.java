@@ -8,6 +8,8 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 /**
  * JDBC mirror repository for {@code third_platform_product_media}. Upsert by (shop_name, media_id); soft-delete only.
  */
@@ -28,6 +30,34 @@ public class ThirdPlatformProductMediaRepository {
         return jdbcTemplate.update(
                 "UPDATE third_platform_product_media SET del_flag = 1 WHERE shop_name = ? AND third_platform_item_id = ?",
                 shopName, itemId);
+    }
+
+    /**
+     * Active media rows for a product, ordered by position.
+     */
+    public List<ThirdPlatformProductMedia> listByItem(String shopName, String itemId) {
+        if (StringUtils.isAnyBlank(shopName, itemId)) {
+            return List.of();
+        }
+        return jdbcTemplate.query(
+                """
+                SELECT id, shop_name, shop_type, third_platform_item_id, media_id, url, alt, position, del_flag
+                FROM third_platform_product_media
+                WHERE shop_name = ? AND third_platform_item_id = ? AND del_flag = 0
+                ORDER BY position ASC NULLS LAST, id ASC
+                """,
+                (rs, rowNum) -> new ThirdPlatformProductMedia()
+                        .setId(rs.getLong("id"))
+                        .setShopName(rs.getString("shop_name"))
+                        .setShopType(rs.getString("shop_type"))
+                        .setThirdPlatformItemId(rs.getString("third_platform_item_id"))
+                        .setMediaId(rs.getString("media_id"))
+                        .setUrl(rs.getString("url"))
+                        .setAlt(rs.getString("alt"))
+                        .setPosition((Integer) rs.getObject("position"))
+                        .setDelFlag(rs.getInt("del_flag")),
+                shopName,
+                itemId);
     }
 
     /**
