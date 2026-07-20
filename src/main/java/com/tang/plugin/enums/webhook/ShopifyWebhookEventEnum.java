@@ -10,6 +10,8 @@ public enum ShopifyWebhookEventEnum {
     ORDERS_CREATE("orders/create", "ORDERS_CREATE", true),
     ORDERS_UPDATED("orders/updated", "ORDERS_UPDATED", true),
     APP_UNINSTALLED("app/uninstalled", "APP_UNINSTALLED", true),
+    /** Soft-delete local product mirror when a product is removed in Shopify Admin. */
+    PRODUCTS_DELETE("products/delete", "PRODUCTS_DELETE", true),
     /** Skeleton only — phase-2 does not register */
     PRODUCTS_UPDATE("products/update", "PRODUCTS_UPDATE", false);
 

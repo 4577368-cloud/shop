@@ -57,8 +57,12 @@ public class ShopifyPublishProductHandler extends BasePublishProductHandler {
                 ? changeDTO.getExchangeRate()
                 : exchangeRateComponent.getExchangeRate(currency);
 
-        List<JSONObject> nodes = shopifyProductComponent.fetchProducts(
+        List<JSONObject> nodes;
+        boolean truncated;
+        var fetch = shopifyProductComponent.fetchProducts(
                 shopName, shop.getShopDomain(), shop.getAccessToken(), changeDTO.getUpdatedAtMin());
+        nodes = fetch.products();
+        truncated = fetch.truncated();
 
         List<ThirdPlatformProduct> productList = new ArrayList<>();
         List<ThirdPlatformSku> skuList = new ArrayList<>();
@@ -71,11 +75,12 @@ public class ShopifyPublishProductHandler extends BasePublishProductHandler {
             skuList.addAll(mirror.getSkuList());
         }
 
-        log.info("Shopify product sync converted shopName={} products={} skus={}",
-                shopName, productList.size(), skuList.size());
+        log.info("Shopify product sync converted shopName={} products={} skus={} truncated={}",
+                shopName, productList.size(), skuList.size(), truncated);
         return SyncThirdPartyPlatformProductDTO.builder()
                 .thirdPlatformProductList(productList)
                 .thirdPlatformSkuList(skuList)
+                .catalogTruncated(truncated)
                 .build();
     }
 

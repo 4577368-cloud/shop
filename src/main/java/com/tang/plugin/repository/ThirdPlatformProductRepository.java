@@ -136,6 +136,41 @@ public class ThirdPlatformProductRepository {
                 toTimestamp(product.getUpdatedAt()));
     }
 
+    /**
+     * Soft-delete one SPU mirror row. Returns rows updated (0 or 1).
+     */
+    public int softDelete(String shopName, String itemId) {
+        if (StringUtils.isAnyBlank(shopName, itemId)) {
+            return 0;
+        }
+        return jdbcTemplate.update(
+                """
+                UPDATE third_platform_product
+                SET del_flag = 1, updated_at = ?
+                WHERE shop_name = ? AND third_platform_item_id = ? AND del_flag = 0
+                """,
+                Timestamp.from(Instant.now()),
+                shopName,
+                itemId);
+    }
+
+    /**
+     * Active product GIDs for a shop (del_flag = 0), used by full-sync reconcile.
+     */
+    public List<String> listActiveItemIds(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return List.of();
+        }
+        return jdbcTemplate.queryForList(
+                """
+                SELECT third_platform_item_id
+                FROM third_platform_product
+                WHERE shop_name = ? AND del_flag = 0
+                """,
+                String.class,
+                shopName);
+    }
+
     private Long findId(String shopName, String itemId) {
         if (StringUtils.isAnyBlank(shopName, itemId)) {
             return null;

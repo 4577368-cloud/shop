@@ -96,8 +96,8 @@ public class ShopifyProductComponent {
     /**
      * Fetch product nodes updated since {@code updatedAtMin} (null = full pull), cursor-paginated.
      */
-    public List<JSONObject> fetchProducts(String shopName, String shopDomain, String accessToken,
-                                          Instant updatedAtMin) {
+    public ProductFetchResult fetchProducts(String shopName, String shopDomain, String accessToken,
+                                            Instant updatedAtMin) {
         if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken)) {
             throw new CustomException("Shopify fetchProducts missing credentials, shopName=" + shopName);
         }
@@ -107,6 +107,7 @@ public class ShopifyProductComponent {
         List<JSONObject> products = new ArrayList<>();
         String cursor = null;
         int page = 0;
+        boolean truncated = false;
 
         while (page < cfg.getMaxPages()) {
             page++;
@@ -148,17 +149,26 @@ public class ShopifyProductComponent {
             boolean hasNext = pageInfo != null && Boolean.TRUE.equals(pageInfo.getBoolean("hasNextPage"));
             String endCursor = pageInfo == null ? null : pageInfo.getString("endCursor");
             if (!hasNext || StringUtils.isBlank(endCursor)) {
+                truncated = false;
                 break;
             }
             cursor = endCursor;
+            if (page >= cfg.getMaxPages()) {
+                truncated = true;
+                log.warn("Shopify fetchProducts hit max pages shopName={} pages={} fetched={}",
+                        shopName, page, products.size());
+            }
         }
+        log.info("Shopify fetchProducts done shopName={} fetched={} pages={} truncated={}",
+                shopName, products.size(), page, truncated);
+        return new ProductFetchResult(products, truncated);
+    }
 
-        if (page >= cfg.getMaxPages()) {
-            log.warn("Shopify fetchProducts hit max pages shopName={} pages={} fetched={}",
-                    shopName, page, products.size());
-        }
-        log.info("Shopify fetchProducts done shopName={} fetched={} pages={}", shopName, products.size(), page);
-        return products;
+    /**
+     * Result of a paginated product pull. {@code truncated} means more pages existed beyond
+     * {@code maxPages} — callers must not reconcile deletions against an incomplete catalog.
+     */
+    public record ProductFetchResult(List<JSONObject> products, boolean truncated) {
     }
 
     /**
