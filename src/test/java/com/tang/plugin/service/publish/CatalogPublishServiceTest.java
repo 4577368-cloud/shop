@@ -1,6 +1,7 @@
 package com.tang.plugin.service.publish;
 
 import com.tang.common.core.exception.CustomException;
+import com.tang.plugin.domain.dto.publish.PublishRequest;
 import com.tang.plugin.domain.dto.publish.PublishResultVO;
 import com.tang.plugin.domain.dto.publish.ShopifyCreateProductResult;
 import com.tang.plugin.domain.entity.publish.ProductPublishRecord;
@@ -86,6 +87,13 @@ class CatalogPublishServiceTest {
                 .setInventoryItemId("gid://shopify/InventoryItem/300");
     }
 
+    private static PublishRequest req(String candidateId) {
+        PublishRequest request = new PublishRequest();
+        request.setShopName(SHOP);
+        request.setCandidateId(candidateId);
+        return request;
+    }
+
     @Test
     void publishSuccessMarksPublishedAndBackfills() {
         seedAuth("read_products,write_products");
@@ -93,7 +101,7 @@ class CatalogPublishServiceTest {
                 anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
-        PublishResultVO vo = catalogPublishService.publish(SHOP, candidateId);
+        PublishResultVO vo = catalogPublishService.publish(req(candidateId));
 
         assertEquals("PUBLISHED", vo.getPublishStatus());
         assertEquals("gid://shopify/Product/100", vo.getShopifyProductId());
@@ -112,8 +120,8 @@ class CatalogPublishServiceTest {
                 anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
-        catalogPublishService.publish(SHOP, candidateId);
-        PublishResultVO second = catalogPublishService.publish(SHOP, candidateId);
+        catalogPublishService.publish(req(candidateId));
+        PublishResultVO second = catalogPublishService.publish(req(candidateId));
 
         assertEquals("PUBLISHED", second.getPublishStatus());
         assertEquals("gid://shopify/Product/100", second.getShopifyProductId());
@@ -129,7 +137,7 @@ class CatalogPublishServiceTest {
                 new ProductPublishRecord().setShopName(SHOP).setCandidateId(candidateId)).getId();
         publishRecordService.markPublishing(id);
 
-        PublishResultVO vo = catalogPublishService.publish(SHOP, candidateId);
+        PublishResultVO vo = catalogPublishService.publish(req(candidateId));
 
         assertEquals("PUBLISHING", vo.getPublishStatus());
         verify(shopifyProductPublishComponent, never()).createSellableProduct(
@@ -140,7 +148,7 @@ class CatalogPublishServiceTest {
     void rejectedWhenMissingWriteProductsScope() {
         seedAuth("read_orders,write_orders,read_products");
 
-        assertThrows(CustomException.class, () -> catalogPublishService.publish(SHOP, candidateId));
+        assertThrows(CustomException.class, () -> catalogPublishService.publish(req(candidateId)));
 
         ProductPublishRecord row = publishRecordRepository.findByShopAndCandidate(SHOP, candidateId).orElseThrow();
         assertEquals(ProductPublishStatus.PENDING, row.getPublishStatus());
@@ -152,13 +160,13 @@ class CatalogPublishServiceTest {
     @Test
     void rejectedWhenShopNotAuthorized() {
         // No auth row seeded.
-        assertThrows(CustomException.class, () -> catalogPublishService.publish(SHOP, candidateId));
+        assertThrows(CustomException.class, () -> catalogPublishService.publish(req(candidateId)));
     }
 
     @Test
     void rejectedWhenCandidateNotFound() {
         seedAuth("write_products");
-        assertThrows(CustomException.class, () -> catalogPublishService.publish(SHOP, "no-such-candidate"));
+        assertThrows(CustomException.class, () -> catalogPublishService.publish(req("no-such-candidate")));
     }
 
     @Test
@@ -168,7 +176,7 @@ class CatalogPublishServiceTest {
                 anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenThrow(new CustomException("Shopify productSet userErrors"));
 
-        assertThrows(CustomException.class, () -> catalogPublishService.publish(SHOP, candidateId));
+        assertThrows(CustomException.class, () -> catalogPublishService.publish(req(candidateId)));
 
         ProductPublishRecord row = publishRecordRepository.findByShopAndCandidate(SHOP, candidateId).orElseThrow();
         assertEquals(ProductPublishStatus.FAILED, row.getPublishStatus());
@@ -183,7 +191,7 @@ class CatalogPublishServiceTest {
                 anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
-        catalogPublishService.publish(SHOP, candidateId);
+        catalogPublishService.publish(req(candidateId));
 
         ArgumentCaptor<String> skuCaptor = ArgumentCaptor.forClass(String.class);
         verify(shopifyProductPublishComponent).createSellableProduct(
@@ -199,7 +207,7 @@ class CatalogPublishServiceTest {
                 anyString(), anyString(), anyString(), anyString(), any(), anyString(), any(), any(), any()))
                 .thenReturn(ok());
 
-        catalogPublishService.publish(SHOP, candidateId);
+        catalogPublishService.publish(req(candidateId));
 
         ArgumentCaptor<String> descCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> imageCaptor = ArgumentCaptor.forClass(String.class);
