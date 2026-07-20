@@ -2,15 +2,19 @@ package com.tang.plugin.controller.product;
 
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.product.ShopProductDetailVO;
+import com.tang.plugin.domain.dto.product.ShopProductUpdateRequest;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.service.product.ProductSyncService;
 import com.tang.plugin.service.product.ShopProductQueryService;
+import com.tang.plugin.service.product.ShopProductWriteService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +40,8 @@ public class ProductSyncAdminController {
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
     @Resource
     private ShopProductQueryService shopProductQueryService;
+    @Resource
+    private ShopProductWriteService shopProductWriteService;
 
     /**
      * Trigger a one-shot product pull from Shopify into the mirror.
@@ -77,5 +83,14 @@ public class ProductSyncAdminController {
     public ShopProductDetailVO detail(@RequestParam String shopName,
                                       @RequestParam String itemId) {
         return shopProductQueryService.getDetail(shopName, itemId);
+    }
+
+    /**
+     * Phase 2 write-back: update Shopify product fields, then refresh the local mirror.
+     */
+    @PutMapping("/detail")
+    public ShopProductDetailVO update(@RequestParam String shopName,
+                                      @RequestBody ShopProductUpdateRequest body) {
+        return shopProductWriteService.update(shopName, body);
     }
 }
