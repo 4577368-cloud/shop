@@ -15,7 +15,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -70,6 +72,22 @@ public class ShopifyAuthService {
         result.put("authorizedAt", a.getAuthorizedAt());
         result.put("productCount", thirdPlatformProductRepository.countByShop(a.getShopName()));
         return result;
+    }
+
+    /**
+     * Active authorized shops for the sidebar switcher (multi-shop). Never returns access tokens.
+     */
+    public List<Map<String, Object>> listActiveShops() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ShopifyStoreAuth a : shopifyStoreAuthService.listActive()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("shopName", a.getShopName());
+            row.put("shopDomain", a.getShopDomain());
+            row.put("authorizedAt", a.getAuthorizedAt());
+            row.put("productCount", thirdPlatformProductRepository.countByShop(a.getShopName()));
+            out.add(row);
+        }
+        return out;
     }
 
     public String buildInstallUrl(String shop) {

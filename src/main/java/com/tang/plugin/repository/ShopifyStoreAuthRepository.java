@@ -90,6 +90,7 @@ public class ShopifyStoreAuthRepository {
                        authorized_at, updated_at, del_flag
                 FROM shopify_store_auth
                 WHERE status = ? AND del_flag = 0
+                ORDER BY authorized_at DESC, id DESC
                 """,
                 ROW_MAPPER,
                 ShopifyAuthStatus.ACTIVE.name());

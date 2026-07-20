@@ -20,6 +20,7 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -45,6 +46,12 @@ public class ShopifyAuthController {
     @GetMapping("/status")
     public Map<String, Object> status(@RequestParam("shop") String shop) {
         return shopifyAuthService.getShopStatus(shop);
+    }
+
+    /** Active authorized shops for the workbench shop switcher (non-sensitive fields only). */
+    @GetMapping("/shops")
+    public List<Map<String, Object>> shops() {
+        return shopifyAuthService.listActiveShops();
     }
 
     @GetMapping("/callback")

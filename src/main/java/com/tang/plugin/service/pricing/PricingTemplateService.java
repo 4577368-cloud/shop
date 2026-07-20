@@ -25,8 +25,8 @@ public class PricingTemplateService {
     static final double DEFAULT_ADDEND = 0d;
     static final String DEFAULT_ROUNDING = RoundingStrategy.HALF_UP.name();
     static final int DEFAULT_DECIMALS = 2;
-    /** Placeholder static rate used only for the system default (no live FX in this phase). */
-    static final double DEFAULT_EXCHANGE_RATE = 0.14d;
+    /** Placeholder static rate: source units per 1 target (e.g. ~7.2 CNY = 1 USD). No live FX. */
+    static final double DEFAULT_EXCHANGE_RATE = 7.2d;
 
     private static final int MIN_DECIMALS = 0;
     private static final int MAX_DECIMALS = 4;
