@@ -77,6 +77,7 @@ public class SkeletonHealthController {
         body.put("shopifyApiKeyConfigured", StringUtils.isNotBlank(shopifyProperties.getApiKey()));
         body.put("shopifyApiSecretConfigured", StringUtils.isNotBlank(shopifyProperties.getApiSecret()));
         body.put("shopifyRedirectUri", shopifyProperties.getRedirectUri());
+        body.put("catalogSnapshotPublish", "AVAILABLE");
         body.put("note", "Platform integration: order sync + auth + webhook gateway.");
         return body;
     }
