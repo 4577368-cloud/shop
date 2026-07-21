@@ -15,6 +15,7 @@ import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.publish.handler.BasePublishProductHandler;
 import com.tang.plugin.service.publish.handler.ProductPlatformHandlerHolder;
 import com.tang.plugin.service.user.ShopifyStoreAuthService;
+import com.tang.plugin.service.match.MatchQueueService;
 import com.tang.plugin.service.webhook.component.ShopifyWebhookComponent;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -57,11 +58,14 @@ public class ProductSyncService {
     private ShopifyWebhookComponent shopifyWebhookComponent;
     @Resource
     private TxManger txManger;
+    @Resource
+    private MatchQueueService matchQueueService;
 
     /**
      * Fire-and-forget full product pull triggered right after a successful OAuth callback.
      * Runs off the request thread so it never blocks the redirect back to the frontend; any
      * failure is logged and swallowed (the shop is still authorized, sync can be retried later).
+     * On success, enqueues background image-auto-match for unbound products.
      */
     @Async
     public void asyncFullSyncShopify(String shopName) {
@@ -69,6 +73,12 @@ public class ProductSyncService {
             log.info("Async product sync (post-auth) started shopName={}", shopName);
             syncShopifyByShopName(shopName, null);
             log.info("Async product sync (post-auth) finished shopName={}", shopName);
+            try {
+                matchQueueService.startImageAutoMatch(shopName, null);
+                log.info("Post-auth image match queue started shopName={}", shopName);
+            } catch (Exception e) {
+                log.error("Post-auth image match queue start failed shopName={}", shopName, e);
+            }
         } catch (Exception e) {
             log.error("Async product sync (post-auth) failed shopName={}", shopName, e);
         }
