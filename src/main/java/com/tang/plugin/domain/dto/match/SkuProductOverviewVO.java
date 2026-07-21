@@ -19,5 +19,7 @@ public class SkuProductOverviewVO {
     private String tangbuyProductId;
     /** Tangbuy detail URL for itemGet; resolved from bound variants' audit reason. */
     private String detailUrl;
+    /** Shopify shop currency for listing-price display (e.g. USD). */
+    private String currency;
     private List<SkuVariantVO> variants;
 }

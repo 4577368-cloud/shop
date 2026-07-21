@@ -111,6 +111,7 @@ public class SkuBindingOverviewService {
                     .setThirdPlatformItemId(itemId)
                     .setTitle(product != null ? product.getTitle() : null)
                     .setImageUrl(product != null ? product.getPrimaryImageUrl() : null)
+                    .setCurrency(product != null ? product.getCurrency() : null)
                     .setTangbuyProductId(tangbuyProductId)
                     .setDetailUrl(detailUrl)
                     .setVariants(variantVos));

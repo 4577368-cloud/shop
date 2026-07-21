@@ -36,6 +36,7 @@ public class TangbuyMallClient {
 
     private static final String PAGE_INFO_PATH = "/prod-api/product-mall/admin/es/product/pageInfo";
     private static final String GATEWAY_SEARCH_PATH = "/gateway/plugin/item/allSubScriptionSearch";
+    private static final String ESTIMATE_SKU_PATH = "/gateway/plugin/logistic/estimateSkuSaleFeePrice";
 
     @Resource
     private TangbuyMallProperties properties;
@@ -203,6 +204,39 @@ public class TangbuyMallClient {
         return new PageInfoResult()
                 .setTotal(total)
                 .setRows(Collections.unmodifiableList(list));
+    }
+
+    /** Tangbuy logistic SKU fee estimate — uses {@link TangbuyMallProperties#resolvedToken()}. */
+    public String estimateSkuSaleFeePrice(String jsonBody) {
+        if (!isConfigured()) {
+            throw new CustomException("Tangbuy mall token not configured (TANG_PLUGIN_TANGBUY_MALL_TOKEN)");
+        }
+        if (StringUtils.isBlank(jsonBody)) {
+            throw new CustomException("estimate body required");
+        }
+        String url = StringUtils.removeEnd(StringUtils.trimToEmpty(properties.getGatewayBaseUrl()), "/")
+                + ESTIMATE_SKU_PATH;
+        try {
+            return client().post()
+                    .uri(url)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("Authorization", "Bearer " + properties.resolvedToken())
+                    .header("currency", "CNY")
+                    .header("device", "pc")
+                    .header("lang", "cn")
+                    .header("tang-request-device", "web")
+                    .header("tang-request-render", "csr")
+                    .header("tang-request-rewrite", "true")
+                    .header("x-timezone", "8")
+                    .header("x-timezone-id", "Asia/Shanghai")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .body(jsonBody)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientException e) {
+            log.error("Tangbuy estimateSkuSaleFeePrice HTTP failed url={}", url, e);
+            throw new CustomException("Tangbuy logistic estimate HTTP failed: " + e.getMessage(), e);
+        }
     }
 
     private RestClient client() {

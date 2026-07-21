@@ -1,11 +1,13 @@
 package com.tang.plugin.controller.logistics;
 
+import com.alibaba.fastjson2.JSON;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.logistics.CorrectLogisticsTypeRequest;
 import com.tang.plugin.domain.dto.logistics.LogisticsAnalysisVO;
 import com.tang.plugin.domain.dto.logistics.LogisticsTemplateUpsertRequest;
 import com.tang.plugin.domain.dto.logistics.LogisticsTemplateVO;
 import com.tang.plugin.domain.dto.logistics.ProductLogisticsProfileVO;
+import com.tang.plugin.service.catalog.TangbuyMallClient;
 import com.tang.plugin.service.logistics.LogisticsAnalysisService;
 import com.tang.plugin.service.logistics.LogisticsTemplateService;
 import jakarta.annotation.Resource;
@@ -30,6 +32,8 @@ public class LogisticsController {
     private LogisticsAnalysisService logisticsAnalysisService;
     @Resource
     private LogisticsTemplateService logisticsTemplateService;
+    @Resource
+    private TangbuyMallClient tangbuyMallClient;
 
     /** Classify (or refresh) bound products and return the distribution summary. */
     @PostMapping("/analyze")
@@ -64,5 +68,21 @@ public class LogisticsController {
     @PostMapping("/template")
     public LogisticsTemplateVO upsertTemplate(@RequestBody LogisticsTemplateUpsertRequest request) {
         return logisticsTemplateService.upsert(request);
+    }
+
+    /**
+     * Proxy Tangbuy {@code estimateSkuSaleFeePrice} using server-side mall token
+     * ({@code TANG_PLUGIN_TANGBUY_MALL_TOKEN} on Render).
+     */
+    @PostMapping("/estimate")
+    public Object estimate(@RequestBody String body) {
+        if (StringUtils.isBlank(body)) {
+            throw new CustomException("estimate requires JSON body");
+        }
+        String raw = tangbuyMallClient.estimateSkuSaleFeePrice(body);
+        if (StringUtils.isBlank(raw)) {
+            throw new CustomException("Tangbuy logistic estimate empty response");
+        }
+        return JSON.parse(raw);
     }
 }
