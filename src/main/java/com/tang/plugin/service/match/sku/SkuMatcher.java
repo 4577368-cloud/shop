@@ -33,6 +33,27 @@ public final class SkuMatcher {
                                    double score, boolean matched) {
     }
 
+    /**
+     * True when at least one Shopify option token does not appear in any SKU attribute across the matrix.
+     * Used for NO_SOURCE review (e.g. shop has XXL but matrix has no XXL).
+     */
+    public static boolean hasOptionAbsentFromMatrix(ThirdPlatformSku variant, List<OfferSkuVO> skus) {
+        Set<String> optionTokens = variantTokens(variant);
+        if (optionTokens.isEmpty() || skus == null || skus.isEmpty()) {
+            return false;
+        }
+        Set<String> matrixValues = new LinkedHashSet<>();
+        for (OfferSkuVO sku : skus) {
+            matrixValues.addAll(skuTokens(sku));
+        }
+        for (String opt : optionTokens) {
+            if (!hitsAny(opt, matrixValues)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static List<VariantAlignment> align(List<ThirdPlatformSku> variants, List<OfferSkuVO> skus) {
         List<VariantAlignment> out = new ArrayList<>();
         if (variants == null) {
@@ -136,7 +157,7 @@ public final class SkuMatcher {
     }
 
     /** Human-readable spec of a SKU: join each attribute's translated (fallback raw) value. */
-    static String specLabel(OfferSkuVO sku) {
+    public static String specLabel(OfferSkuVO sku) {
         List<String> parts = new ArrayList<>();
         if (sku.getSkuAttributes() != null) {
             for (OfferSkuAttributeVO a : sku.getSkuAttributes()) {

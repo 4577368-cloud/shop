@@ -21,7 +21,7 @@ import java.util.Optional;
 public class ShopMatchJobRepository {
 
     private static final String COLUMNS = """
-            id, shop_name, job_type, status, scope_item_id,
+            id, shop_name, job_type, status, scope_item_id, scope_item_ids_json,
             total_count, processed_count, linked_count, skipped_count, failed_count,
             last_error, recent_json, started_at, finished_at, created_at, updated_at, del_flag
             """;
@@ -32,6 +32,7 @@ public class ShopMatchJobRepository {
             .setJobType(rs.getString("job_type"))
             .setStatus(MatchJobStatus.valueOf(rs.getString("status")))
             .setScopeItemId(rs.getString("scope_item_id"))
+            .setScopeItemIdsJson(rs.getString("scope_item_ids_json"))
             .setTotalCount(rs.getInt("total_count"))
             .setProcessedCount(rs.getInt("processed_count"))
             .setLinkedCount(rs.getInt("linked_count"))
@@ -85,18 +86,19 @@ public class ShopMatchJobRepository {
             PreparedStatement ps = connection.prepareStatement(
                     """
                     INSERT INTO shop_match_job
-                    (shop_name, job_type, status, scope_item_id,
+                    (shop_name, job_type, status, scope_item_id, scope_item_ids_json,
                      total_count, processed_count, linked_count, skipped_count, failed_count,
                      last_error, recent_json, started_at, finished_at, created_at, updated_at, del_flag)
-                    VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, ?, ?, 0)
+                    VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, ?, ?, 0)
                     """,
                     new String[]{"id"});
             ps.setString(1, job.getShopName());
             ps.setString(2, StringUtils.defaultIfBlank(job.getJobType(), "IMAGE_AUTO_MATCH"));
             ps.setString(3, job.getStatus().name());
             ps.setString(4, job.getScopeItemId());
-            ps.setTimestamp(5, Timestamp.from(now));
+            ps.setString(5, job.getScopeItemIdsJson());
             ps.setTimestamp(6, Timestamp.from(now));
+            ps.setTimestamp(7, Timestamp.from(now));
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();

@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * Background image-auto-match queue: start after auth sync or manual trigger; poll real progress.
  */
@@ -23,7 +25,11 @@ public class MatchQueueController {
     @PostMapping("/start")
     public MatchJobProgressVO start(
             @RequestParam String shopName,
-            @RequestParam(required = false) String thirdPlatformItemId) {
+            @RequestParam(required = false) String thirdPlatformItemId,
+            @RequestParam(required = false) List<String> thirdPlatformItemIds) {
+        if (thirdPlatformItemIds != null && !thirdPlatformItemIds.isEmpty()) {
+            return matchQueueService.startImageAutoMatch(shopName, null, thirdPlatformItemIds);
+        }
         return matchQueueService.startImageAutoMatch(shopName, thirdPlatformItemId);
     }
 

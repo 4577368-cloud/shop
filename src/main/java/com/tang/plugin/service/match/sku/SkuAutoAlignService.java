@@ -15,6 +15,10 @@ import com.tang.plugin.enums.match.MatchStatus;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
+import com.tang.plugin.repository.skualign.VariantAlignmentReviewRepository;
+import com.tang.plugin.repository.skualign.VariantSkuBindingRepository;
+import com.tang.plugin.service.skualign.ProductPrimaryOfferResolver;
+import com.tang.plugin.enums.skualign.VariantReviewState;
 import com.tang.plugin.service.match.sku.SkuMatcher.VariantAlignment;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +29,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * S1-b1: auto-align a bound product's Shopify variants to the 1688 offer's SKU matrix, replacing the
@@ -46,6 +51,7 @@ public class SkuAutoAlignService {
     public static final String ERR_NO_OFFER_SKU = "NO_OFFER_SKU";
 
     private static final String BIND_SOURCE_AUTO = "AUTO_ALIGN";
+    private static final String BIND_SOURCE_MANUAL = "MANUAL";
     private static final String ALGO_RULE = "RULE";
     private static final int SCORE_SCALE = 4;
 
@@ -59,6 +65,12 @@ public class SkuAutoAlignService {
     private Crossborder1688ProductClient crossborder1688ProductClient;
     @Resource
     private TxManger txManger;
+    @Resource
+    private ProductPrimaryOfferResolver productPrimaryOfferResolver;
+    @Resource
+    private VariantSkuBindingRepository v1BindingRepository;
+    @Resource
+    private VariantAlignmentReviewRepository reviewRepository;
 
     /**
      * Auto-align the variants of {@code thirdPlatformItemId}. When {@code offerId} is blank it is resolved
@@ -72,7 +84,7 @@ public class SkuAutoAlignService {
         }
         String resolvedOffer = StringUtils.isNotBlank(offerId)
                 ? offerId.trim()
-                : resolveBoundOffer(shopName, thirdPlatformItemId);
+                : productPrimaryOfferResolver.resolvePrimaryOffer(shopName, thirdPlatformItemId);
 
         List<ThirdPlatformSku> variants = thirdPlatformSkuRepository.listByItem(shopName, thirdPlatformItemId);
         if (variants.isEmpty()) {
@@ -115,6 +127,100 @@ public class SkuAutoAlignService {
                 .setItems(items);
     }
 
+    /**
+     * Dual-write helper for V1 engine: persist legacy PENDING RULE bindings for matched variants only.
+     */
+    public void persistRuleMatches(String shopName,
+                                   String thirdPlatformItemId,
+                                   String offerId,
+                                   List<VariantAlignment> alignments,
+                                   String detailUrl) {
+        persistRuleMatches(shopName, thirdPlatformItemId, offerId, alignments, detailUrl, BindingStatus.PENDING);
+    }
+
+    /** Dual-write ACTIVE legacy bindings (internal-origin auto-activate path). */
+    public void persistActiveRuleMatches(String shopName,
+                                         String thirdPlatformItemId,
+                                         String offerId,
+                                         List<VariantAlignment> alignments,
+                                         String detailUrl) {
+        persistRuleMatches(shopName, thirdPlatformItemId, offerId, alignments, detailUrl, BindingStatus.ACTIVE);
+    }
+
+    private void persistRuleMatches(String shopName,
+                                    String thirdPlatformItemId,
+                                    String offerId,
+                                    List<VariantAlignment> alignments,
+                                    String detailUrl,
+                                    BindingStatus bindStatus) {
+        txManger.run(() -> {
+            for (VariantAlignment a : alignments) {
+                if (a.matched()) {
+                    persist(shopName, thirdPlatformItemId, offerId, a, detailUrl, bindStatus);
+                }
+            }
+        });
+    }
+
+    /** Dual-write helper for V1 confirm-suggestions: promote PENDING or write ACTIVE legacy row. */
+    public void confirmLegacySuggestion(String shopName,
+                                        String thirdPlatformItemId,
+                                        String offerId,
+                                        String thirdPlatformSkuId,
+                                        String tangbuySkuId,
+                                        BigDecimal score,
+                                        String matchSourceName) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId, offerId, tangbuySkuId)) {
+            return;
+        }
+        Optional<ShopProductBinding> existing =
+                shopProductBindingRepository.findBindableBySkuId(shopName, thirdPlatformSkuId);
+        if (existing.isPresent() && BIND_SOURCE_MANUAL.equals(existing.get().getBindSource())) {
+            log.info("SkuAutoAlign confirm skip MANUAL locked variant={}", thirdPlatformSkuId);
+            return;
+        }
+        int activated = shopProductBindingRepository.activateBySkuId(shopName, thirdPlatformSkuId);
+        if (activated > 0) {
+            log.info("SkuAutoAlign confirm ACK shopName={} variant={} rows={}",
+                    shopName, thirdPlatformSkuId, activated);
+            return;
+        }
+        String spec = tangbuySkuId;
+        String detailUrl = "https://detail.1688.com/offer/" + offerId + ".html";
+        MatchSource source = parseMatchSource(matchSourceName);
+        String reason = SkuMatchReason.encode(
+                source == MatchSource.RULE ? ALGO_RULE : source.name(),
+                score != null ? score.doubleValue() : 1.0d,
+                tangbuySkuId,
+                spec,
+                detailUrl);
+        ShopProductMatchCandidate candidate = new ShopProductMatchCandidate()
+                .setShopName(shopName)
+                .setShopType(PluginType.SHOPIFY.getCode())
+                .setThirdPlatformItemId(thirdPlatformItemId)
+                .setThirdPlatformSkuId(thirdPlatformSkuId)
+                .setTangbuyProductId(offerId)
+                .setTangbuySkuId(tangbuySkuId)
+                .setMatchSource(source)
+                .setMatchScore(score != null ? score : BigDecimal.ONE.setScale(SCORE_SCALE, RoundingMode.HALF_UP))
+                .setMatchReason(reason)
+                .setStatus(MatchStatus.CONFIRMED);
+        txManger.run(() -> {
+            Long candidateId = shopProductMatchCandidateRepository.upsert(candidate);
+            ShopProductBinding binding = new ShopProductBinding()
+                    .setShopName(shopName)
+                    .setShopType(PluginType.SHOPIFY.getCode())
+                    .setThirdPlatformItemId(thirdPlatformItemId)
+                    .setThirdPlatformSkuId(thirdPlatformSkuId)
+                    .setTangbuyProductId(offerId)
+                    .setTangbuySkuId(tangbuySkuId)
+                    .setBindSource(BIND_SOURCE_AUTO)
+                    .setCandidateId(candidateId)
+                    .setBindStatus(BindingStatus.ACTIVE);
+            shopProductBindingRepository.upsertActive(binding);
+        });
+    }
+
     /** "确认无误": promote a single variant's PENDING binding to ACTIVE. Idempotent. */
     public void acknowledge(String shopName, String thirdPlatformSkuId) {
         if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
@@ -129,11 +235,40 @@ public class SkuAutoAlignService {
         if (StringUtils.isAnyBlank(shopName, thirdPlatformSkuId)) {
             throw new CustomException("unbind requires shopName and thirdPlatformSkuId");
         }
-        int rows = shopProductBindingRepository.deactivateBySkuId(shopName, thirdPlatformSkuId);
-        log.info("SkuBinding UNBIND shopName={} thirdPlatformSkuId={} rows={}", shopName, thirdPlatformSkuId, rows);
+        txManger.run(() -> {
+            int rows = shopProductBindingRepository.deactivateBySkuId(shopName, thirdPlatformSkuId);
+            v1BindingRepository.deactivateByVariant(shopName, thirdPlatformSkuId);
+            reviewRepository.findByVariant(shopName, thirdPlatformSkuId).ifPresent(review -> {
+                review.setReviewState(VariantReviewState.UNMAPPED)
+                        .setSuggestedOfferId(null)
+                        .setSuggestedOfferSkuId(null)
+                        .setSuggestedSourceRole(null)
+                        .setSuggestedMatchSource(null)
+                        .setRequiresUserAction(true)
+                        .setReasonText("用户已取消关联，需重新选择 SKU");
+                reviewRepository.upsert(review);
+            });
+            log.info("SkuBinding UNBIND shopName={} thirdPlatformSkuId={} legacyRows={}",
+                    shopName, thirdPlatformSkuId, rows);
+        });
     }
 
     private void persist(String shopName, String itemId, String offerId, VariantAlignment a, String detailUrl) {
+        persist(shopName, itemId, offerId, a, detailUrl, BindingStatus.PENDING);
+    }
+
+    private void persist(String shopName,
+                         String itemId,
+                         String offerId,
+                         VariantAlignment a,
+                         String detailUrl,
+                         BindingStatus bindStatus) {
+        Optional<ShopProductBinding> existing =
+                shopProductBindingRepository.findBindableBySkuId(shopName, a.variantGid());
+        if (existing.isPresent() && BIND_SOURCE_MANUAL.equals(existing.get().getBindSource())) {
+            log.debug("SkuAutoAlign skip MANUAL locked variant={}", a.variantGid());
+            return;
+        }
         String reason = SkuMatchReason.encode(ALGO_RULE, a.score(), a.skuId(), a.specLabel(), detailUrl);
         ShopProductMatchCandidate candidate = new ShopProductMatchCandidate()
                 .setShopName(shopName)
@@ -157,24 +292,23 @@ public class SkuAutoAlignService {
                 .setTangbuySkuId(a.skuId())
                 .setBindSource(BIND_SOURCE_AUTO)
                 .setCandidateId(candidateId)
-                .setBindStatus(BindingStatus.PENDING);
-        // Auto-aligned variants are AI-suggested: land as PENDING for human confirmation on /sku-align.
-        shopProductBindingRepository.upsert(binding, BindingStatus.PENDING);
-    }
-
-    /** The offer bound to any variant of this product (A3-2b product-level binding; PENDING or ACTIVE). */
-    private String resolveBoundOffer(String shopName, String itemId) {
-        return shopProductBindingRepository.listBindableByShop(shopName).stream()
-                .filter(b -> itemId.equals(b.getThirdPlatformItemId()))
-                .map(ShopProductBinding::getTangbuyProductId)
-                .filter(StringUtils::isNotBlank)
-                .findFirst()
-                .orElseThrow(() -> new CustomException(ERR_NOT_BOUND
-                        + ": 该商品尚未绑定 1688 货源，请先在「智能选品」确认匹配后再自动对齐"));
+                .setBindStatus(bindStatus);
+        shopProductBindingRepository.upsert(binding, bindStatus);
     }
 
     private static BigDecimal toScore(double score) {
         double clamped = Math.max(0d, Math.min(1d, score));
         return BigDecimal.valueOf(clamped).setScale(SCORE_SCALE, RoundingMode.HALF_UP);
+    }
+
+    private static MatchSource parseMatchSource(String raw) {
+        if (StringUtils.isBlank(raw)) {
+            return MatchSource.RULE;
+        }
+        try {
+            return MatchSource.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return MatchSource.RULE;
+        }
     }
 }

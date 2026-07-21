@@ -20,8 +20,12 @@ public class SkuVariantBindingVO {
     private String tangbuySkuId;
     /** PENDING = AI-suggested, awaiting confirmation; ACTIVE = confirmed. Null only for legacy rows. */
     private String bindStatus;
-    /** Matched 1688 spec label for RULE/AI (auto-aligned) bindings, e.g. "Red / M"; null for IMAGE. */
+    /** Matched 1688 spec/title snapshot for回显, e.g. "Red / M" or offer title for IMAGE bindings. */
     private String tangbuySkuSpec;
+    /** IMAGE binding snapshot: candidate image at confirm time. */
+    private String offerImageUrl;
+    /** IMAGE binding snapshot: candidate price at confirm time (gateway raw string). */
+    private String offerPrice;
     /** How the binding was established: IMAGE (A3-2b) or RULE/AI (S1-b1 auto-align). */
     private String matchSource;
     private BigDecimal matchScore;

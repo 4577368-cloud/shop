@@ -33,6 +33,8 @@ public class ConfirmImageMatchDTO {
     private String offerImageUrl;
     /** Snapshot of the matched candidate's price string (gateway raw, e.g. "12.00"). */
     private String offerPrice;
+    /** Snapshot of the matched candidate's title for SKU-page回显. */
+    private String offerTitle;
     /**
      * When true the binding is written as PENDING (AI-suggested, awaiting confirmation) — used by the
      * scan-time auto-link. When false/absent it is an explicit user confirm and lands as ACTIVE.

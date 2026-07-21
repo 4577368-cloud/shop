@@ -7,23 +7,10 @@ import java.util.Map;
 
 /**
  * Structured, fixed-format codec for the image-match {@code match_reason} audit column (A3-2b).
- * Not free text: a pipe-delimited ordered {@code key=value} string carrying the A3-2a resolution
- * context so the binding stays auditable and machine-parseable.
  *
  * <p>Format:
- * {@code img=<SHOPIFY|ORIGINAL>|qs=<NONE|TITLE|LLM>|q=<appliedQuery>|pic=<imageUrl>|price=<price>|url=<detailUrl>}.
- * Keys are always emitted in this order; empty values are still emitted (empty tail) so positions are
- * stable and adding keys stays backward compatible (old rows simply lack {@code pic}/{@code price}).
- *
- * <p>{@code pic} and {@code price} snapshot the matched candidate's image + price so回显 can render the
- * exact image/price the user saw at match time, without re-querying {@code queryProductDetail} (whose
- * cross-border detail often returns a null white image and an empty SKU matrix).
- *
- * <p>Reserved characters differ per field: value fields ({@code img/qs/q/price}) strip {@code | = \n \r};
- * URL-ish fields ({@code pic/url}) strip only {@code | \n \r} so query-string {@code =} survives intact
- * (previously {@code =} was replaced with a space, corrupting detail links). {@code pic} is capped so
- * the (usually longer) {@code url} keeps budget; {@code url} is the terminal field and absorbs the rest
- * of the {@link #MAX_LEN} ({@code match_reason VARCHAR(1024)}) budget.
+ * {@code img=...|qs=...|q=...|pic=...|price=...|title=...|spec=...|url=<detailUrl>}.
+ * {@code title}/{@code spec} snapshot the matched candidate for SKU-page回显 when itemGet is unavailable.
  */
 public final class ImageMatchReason {
 
@@ -37,11 +24,18 @@ public final class ImageMatchReason {
 
     /** Backward-compatible 4-arg encode (no image/price snapshot). */
     public static String encode(String imageSource, String querySource, String appliedQuery, String detailUrl) {
-        return encode(imageSource, querySource, appliedQuery, detailUrl, null, null);
+        return encode(imageSource, querySource, appliedQuery, detailUrl, null, null, null, null);
+    }
+
+    /** Backward-compatible 6-arg encode (image/price snapshot, no title/spec). */
+    public static String encode(String imageSource, String querySource, String appliedQuery,
+                                String detailUrl, String imageUrl, String price) {
+        return encode(imageSource, querySource, appliedQuery, detailUrl, imageUrl, price, null, null);
     }
 
     public static String encode(String imageSource, String querySource, String appliedQuery,
-                                String detailUrl, String imageUrl, String price) {
+                                String detailUrl, String imageUrl, String price,
+                                String offerTitle, String skuSpec) {
         String img = sanitize(imageSource);
         String qs = StringUtils.defaultIfBlank(sanitize(querySource), "NONE");
         String q = sanitize(appliedQuery);
@@ -50,13 +44,15 @@ public final class ImageMatchReason {
             pic = pic.substring(0, MAX_PIC_LEN);
         }
         String pr = sanitize(price);
-        String url = sanitizeUrl(detailUrl);
-        String base = "img=" + img + "|qs=" + qs + "|q=" + q + "|pic=" + pic + "|price=" + pr + "|url=";
-        // url is the terminal, unbounded field; trim it so the whole reason fits the column.
+        String title = sanitize(offerTitle);
+        String spec = sanitize(skuSpec);
+        String base = "img=" + img + "|qs=" + qs + "|q=" + q + "|pic=" + pic + "|price=" + pr
+                + "|title=" + title + "|spec=" + spec + "|url=";
         int budget = MAX_LEN - base.length();
         if (budget < 0) {
             return StringUtils.left(base, MAX_LEN);
         }
+        String url = sanitizeUrl(detailUrl);
         if (url.length() > budget) {
             url = url.substring(0, budget);
         }
@@ -80,10 +76,11 @@ public final class ImageMatchReason {
                 emptyToNull(map.get("q")),
                 emptyToNull(map.get("url")),
                 emptyToNull(map.get("pic")),
-                emptyToNull(map.get("price")));
+                emptyToNull(map.get("price")),
+                emptyToNull(map.get("title")),
+                emptyToNull(map.get("spec")));
     }
 
-    /** Value fields: strip pipe/equals/newlines (equals is a structural separator here). */
     private static String sanitize(String value) {
         if (value == null) {
             return "";
@@ -91,7 +88,6 @@ public final class ImageMatchReason {
         return value.replaceAll("[|=\\r\\n]", " ").trim();
     }
 
-    /** URL-ish fields: keep {@code =} (query params) intact; only pipe/newlines are structural. */
     private static String sanitizeUrl(String value) {
         if (value == null) {
             return "";
@@ -103,8 +99,7 @@ public final class ImageMatchReason {
         return StringUtils.isBlank(v) ? null : v;
     }
 
-    /** Decoded reason parts (any may be null). {@code imageUrl}/{@code price} snapshot the matched candidate. */
     public record Decoded(String imageSource, String querySource, String appliedQuery, String detailUrl,
-                          String imageUrl, String price) {
+                          String imageUrl, String price, String offerTitle, String skuSpec) {
     }
 }

@@ -15,6 +15,8 @@ public class ShopMatchJob {
     private MatchJobStatus status;
     /** When set, only this thirdPlatformItemId is (re)matched. */
     private String scopeItemId;
+    /** JSON array of thirdPlatformItemIds for incremental new-arrival jobs. */
+    private String scopeItemIdsJson;
     private int totalCount;
     private int processedCount;
     private int linkedCount;

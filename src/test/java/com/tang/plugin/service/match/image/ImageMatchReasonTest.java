@@ -25,7 +25,7 @@ class ImageMatchReasonTest {
     @Test
     void fixedKeyOrderAndDefaults() {
         String reason = ImageMatchReason.encode("ORIGINAL", null, null, null);
-        assertTrue(reason.startsWith("img=ORIGINAL|qs=NONE|q=|pic=|price=|url="), reason);
+        assertTrue(reason.startsWith("img=ORIGINAL|qs=NONE|q=|pic=|price=|title=|spec=|url="), reason);
         ImageMatchReason.Decoded d = ImageMatchReason.decode(reason);
         assertEquals("ORIGINAL", d.imageSource());
         assertEquals("NONE", d.querySource());
@@ -76,6 +76,16 @@ class ImageMatchReasonTest {
         ImageMatchReason.Decoded d = ImageMatchReason.decode(reason);
         assertEquals("标题", d.appliedQuery());
         assertTrue(d.detailUrl().startsWith("https://x/aaa"));
+    }
+
+    @Test
+    void titleAndSpecRoundTrip() {
+        String reason = ImageMatchReason.encode("SHOPIFY", "TITLE", "q",
+                "https://detail.1688.com/offer/1.html",
+                "https://img/x.jpg", "9.90", "针织上衣", "杏色 / S");
+        ImageMatchReason.Decoded d = ImageMatchReason.decode(reason);
+        assertEquals("针织上衣", d.offerTitle());
+        assertEquals("杏色 / S", d.skuSpec());
     }
 
     @Test

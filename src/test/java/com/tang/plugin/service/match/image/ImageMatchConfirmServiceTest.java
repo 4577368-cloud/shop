@@ -3,6 +3,8 @@ package com.tang.plugin.service.match.image;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.match.ConfirmImageMatchDTO;
 import com.tang.plugin.domain.dto.match.ImageBindingView;
+import com.tang.plugin.domain.dto.match.sku.OfferDetailVO;
+import com.tang.plugin.domain.dto.match.sku.OfferSkuVO;
 import com.tang.plugin.domain.entity.match.ShopProductBinding;
 import com.tang.plugin.domain.entity.match.ShopProductMatchCandidate;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
@@ -14,16 +16,22 @@ import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
+import com.tang.plugin.service.match.sku.Crossborder1688ProductClient;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -56,12 +64,23 @@ class ImageMatchConfirmServiceTest {
     @Resource
     private JdbcTemplate jdbcTemplate;
 
+    @MockBean
+    private Crossborder1688ProductClient crossborder1688ProductClient;
+
     @BeforeEach
     void clean() {
         jdbcTemplate.update("DELETE FROM shop_product_binding WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM shop_product_match_candidate WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM third_platform_sku WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM third_platform_product WHERE shop_name = ?", SHOP);
+        mockOfferMatrix("111", "111");
+        mockOfferMatrix("222", "222");
+    }
+
+    private void mockOfferMatrix(String offerId, String defaultSkuId) {
+        OfferDetailVO detail = new OfferDetailVO().setOfferId(offerId).setSkus(List.of(
+                new OfferSkuVO().setSkuId(defaultSkuId)));
+        when(crossborder1688ProductClient.queryProductDetail(eq(offerId), any())).thenReturn(detail);
     }
 
     private void seedProductWithVariant() {
@@ -90,7 +109,7 @@ class ImageMatchConfirmServiceTest {
         assertTrue(view.isBound());
         assertEquals(VARIANT, view.getThirdPlatformSkuId());
         assertEquals("111", view.getTangbuyProductId());
-        assertEquals("111", view.getTangbuySkuId()); // offerSkuId blank → offerProductId
+        assertEquals("111", view.getTangbuySkuId()); // offerSkuId blank → first matrix sku
         assertEquals("LLM", view.getQuerySource());
         assertEquals("礼盒", view.getAppliedQuery());
 

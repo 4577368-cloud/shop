@@ -15,6 +15,7 @@ import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.service.catalog.TangbuyCatalogService;
 import com.tang.plugin.service.match.image.ImageMatchReason;
+import com.tang.plugin.service.skualign.SkuAlignV1Service;
 import jakarta.annotation.Resource;
 import lombok.Data;
 import lombok.experimental.Accessors;
@@ -52,6 +53,8 @@ public class CatalogPublishLinkService {
     private ShopProductBindingRepository shopProductBindingRepository;
     @Resource
     private TxManger txManger;
+    @Resource
+    private SkuAlignV1Service skuAlignV1Service;
 
     /**
      * Link a freshly published catalog product to its source. Returns true when a binding was written;
@@ -166,6 +169,7 @@ public class CatalogPublishLinkService {
             log.info("Catalog publish LINK shopName={} productGid={} variantGid={} offerId={} candidateId={}",
                     shopName, productGid, variantGid, tangbuyProductId, candidateId);
         });
+        skuAlignV1Service.onProductBindConfirmed(shopName, productGid, "CATALOG");
         return LinkOutcome.LINKED;
     }
 

@@ -32,4 +32,6 @@ public class ImageBindingView {
     private String offerImageUrl;
     /** Snapshot of the matched candidate's price string (gateway raw), used for回显. */
     private String offerPrice;
+    /** Snapshot of the matched candidate's title (or SKU spec when spec is preferred). */
+    private String offerTitle;
 }

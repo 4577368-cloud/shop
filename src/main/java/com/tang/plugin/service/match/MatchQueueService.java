@@ -9,10 +9,12 @@ import com.tang.plugin.domain.dto.match.image.ImageSearchResultVO;
 import com.tang.plugin.domain.entity.match.ShopMatchJob;
 import com.tang.plugin.domain.entity.match.ShopProductBinding;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
+import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
 import com.tang.plugin.enums.match.MatchJobStatus;
 import com.tang.plugin.repository.ShopMatchJobRepository;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
+import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.match.image.ImageMatchConfirmService;
 import com.tang.plugin.service.match.image.ImageSearchService;
 import com.tang.plugin.service.publish.CatalogPublishLinkService;
@@ -24,6 +26,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
@@ -47,6 +50,8 @@ public class MatchQueueService {
     @Resource
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
     @Resource
+    private ThirdPlatformSkuRepository thirdPlatformSkuRepository;
+    @Resource
     private ShopProductBindingRepository shopProductBindingRepository;
     @Resource
     private ImageSearchService imageSearchService;
@@ -59,6 +64,15 @@ public class MatchQueueService {
      * Start (or return) a background image-match job for a shop. Idempotent while RUNNING/PENDING.
      */
     public MatchJobProgressVO startImageAutoMatch(String shopName, String scopeItemId) {
+        return startImageAutoMatch(shopName, scopeItemId, null);
+    }
+
+    /**
+     * Start (or return) a scoped job. {@code scopeItemIds} limits processing to the given mirror rows
+     * (e.g. webhook new arrivals) without re-enqueueing the whole shop.
+     */
+    public MatchJobProgressVO startImageAutoMatch(
+            String shopName, String scopeItemId, List<String> scopeItemIds) {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("match queue requires shopName");
         }
@@ -66,11 +80,24 @@ public class MatchQueueService {
         if (active.isPresent()) {
             return toProgress(active.get());
         }
+        String scopeIdsJson = null;
+        if (scopeItemIds != null && !scopeItemIds.isEmpty()) {
+            List<String> cleaned = scopeItemIds.stream()
+                    .filter(StringUtils::isNotBlank)
+                    .map(String::trim)
+                    .distinct()
+                    .toList();
+            if (!cleaned.isEmpty()) {
+                scopeIdsJson = JSON.toJSONString(cleaned);
+                scopeItemId = null;
+            }
+        }
         ShopMatchJob job = new ShopMatchJob()
                 .setShopName(shopName)
                 .setJobType(JOB_TYPE)
                 .setStatus(MatchJobStatus.PENDING)
-                .setScopeItemId(StringUtils.trimToNull(scopeItemId));
+                .setScopeItemId(StringUtils.trimToNull(scopeItemId))
+                .setScopeItemIdsJson(scopeIdsJson);
         Long id = shopMatchJobRepository.insert(job);
         if (id == null) {
             throw new CustomException("failed to create match job");
@@ -113,16 +140,15 @@ public class MatchQueueService {
                 }
             }
 
+            Set<String> scopeIds = resolveScopeIds(job);
+            boolean scoped = !scopeIds.isEmpty();
+
             List<ThirdPlatformProduct> targets = new ArrayList<>();
             for (ThirdPlatformProduct p : thirdPlatformProductRepository.listByShop(shopName)) {
-                if (StringUtils.isNotBlank(job.getScopeItemId())
-                        && !job.getScopeItemId().equals(p.getThirdPlatformItemId())) {
+                if (scoped && !scopeIds.contains(p.getThirdPlatformItemId())) {
                     continue;
                 }
                 if (boundItems.contains(p.getThirdPlatformItemId())) {
-                    continue;
-                }
-                if (StringUtils.isBlank(p.getPrimaryImageUrl())) {
                     continue;
                 }
                 targets.add(p);
@@ -143,6 +169,16 @@ public class MatchQueueService {
             for (ThirdPlatformProduct p : targets) {
                 job = shopMatchJobRepository.findById(jobId).orElseThrow();
                 String name = StringUtils.defaultIfBlank(p.getTitle(), p.getThirdPlatformItemId());
+                String itemId = p.getThirdPlatformItemId();
+                if (!hasVariantMirror(shopName, itemId)) {
+                    job.setSkippedCount(job.getSkippedCount() + 1);
+                    pushRecent(recent, name + "：变体未同步，请稍后重试");
+                    job.setProcessedCount(job.getProcessedCount() + 1);
+                    job.setRecentJson(JSON.toJSONString(new ArrayList<>(recent)));
+                    shopMatchJobRepository.updateProgress(job);
+                    continue;
+                }
+                List<ImageSearchProductVO> recalled = List.of();
                 try {
                     ImageSearchResultVO res = imageSearchService.searchByShopProduct(
                             shopName, p.getThirdPlatformItemId(), SEARCH_LIMIT);
@@ -151,29 +187,27 @@ public class MatchQueueService {
                         job.setSkippedCount(job.getSkippedCount() + 1);
                         pushRecent(recent, name + "：未召回货源");
                     } else {
-                        int bestIdx = MatchCandidateRanker.pickBestIndex(items);
-                        ImageSearchProductVO cand = items.get(bestIdx);
-                        ConfirmImageMatchDTO dto = new ConfirmImageMatchDTO()
-                                .setShopName(shopName)
-                                .setThirdPlatformItemId(p.getThirdPlatformItemId())
-                                .setOfferProductId(cand.getProductId())
-                                .setOfferSkuId(cand.getSkuId())
-                                .setDetailUrl(cand.getDetailUrl())
-                                .setSimilarityScore(cand.getSimilarityScore())
-                                .setImageSource(res.getImageSource())
-                                .setQuerySource(res.getQuerySource())
-                                .setAppliedQuery(res.getAppliedQuery())
-                                .setOfferImageUrl(cand.getImageUrl())
-                                .setOfferPrice(cand.getPrice())
-                                .setAuto(true);
-                        imageMatchConfirmService.confirm(dto);
-                        job.setLinkedCount(job.getLinkedCount() + 1);
-                        pushRecent(recent, name + "：已关联 " + StringUtils.defaultIfBlank(cand.getTitle(), cand.getProductId()) + "（待确认）");
+                        recalled = items;
+                        if (tryAutoLink(shopName, p.getThirdPlatformItemId(), items, res, job, recent, name)) {
+                            // linked
+                        } else {
+                            job.setFailedCount(job.getFailedCount() + 1);
+                            pushRecent(recent, name + "：有候选但自动关联失败");
+                        }
                     }
                 } catch (Exception e) {
                     job.setFailedCount(job.getFailedCount() + 1);
                     job.setLastError(e.getMessage());
-                    pushRecent(recent, name + "：跳过");
+                    String err = StringUtils.defaultString(e.getMessage());
+                    if (!recalled.isEmpty()) {
+                        pushRecent(recent, name + "：有候选但自动关联失败");
+                    } else if (StringUtils.contains(err, "NO_VARIANT")) {
+                        pushRecent(recent, name + "：变体未同步，请稍后重试");
+                    } else if (StringUtils.contains(err, "NO_PRIMARY_IMAGE")) {
+                        pushRecent(recent, name + "：主图未就绪");
+                    } else {
+                        pushRecent(recent, name + "：跳过");
+                    }
                     log.warn("Match queue item failed shopName={} itemId={}: {}",
                             shopName, p.getThirdPlatformItemId(), e.getMessage());
                 }
@@ -203,6 +237,79 @@ public class MatchQueueService {
         while (recent.size() > RECENT_MAX) {
             recent.removeLast();
         }
+    }
+
+    private boolean hasVariantMirror(String shopName, String itemId) {
+        return thirdPlatformSkuRepository.findFirstByItem(shopName, itemId)
+                .map(ThirdPlatformSku::getThirdPlatformSkuId)
+                .filter(StringUtils::isNotBlank)
+                .isPresent();
+    }
+
+    private boolean tryAutoLink(
+            String shopName,
+            String itemId,
+            List<ImageSearchProductVO> items,
+            ImageSearchResultVO res,
+            ShopMatchJob job,
+            Deque<String> recent,
+            String name) {
+        int bestIdx = MatchCandidateRanker.pickBestIndex(items);
+        int size = items.size();
+        for (int offset = 0; offset < size; offset++) {
+            int idx = (bestIdx + offset) % size;
+            ImageSearchProductVO cand = items.get(idx);
+            if (cand == null || StringUtils.isBlank(cand.getProductId())) {
+                continue;
+            }
+            try {
+                ConfirmImageMatchDTO dto = new ConfirmImageMatchDTO()
+                        .setShopName(shopName)
+                        .setThirdPlatformItemId(itemId)
+                        .setOfferProductId(cand.getProductId())
+                        .setOfferSkuId(cand.getSkuId())
+                        .setDetailUrl(cand.getDetailUrl())
+                        .setSimilarityScore(cand.getSimilarityScore())
+                        .setImageSource(res.getImageSource())
+                        .setQuerySource(res.getQuerySource())
+                        .setAppliedQuery(res.getAppliedQuery())
+                        .setOfferImageUrl(cand.getImageUrl())
+                        .setOfferPrice(cand.getPrice())
+                        .setOfferTitle(StringUtils.trimToNull(cand.getTitle()))
+                        .setAuto(true);
+                imageMatchConfirmService.confirm(dto);
+                job.setLinkedCount(job.getLinkedCount() + 1);
+                pushRecent(recent, name + "：已关联 "
+                        + StringUtils.defaultIfBlank(cand.getTitle(), cand.getProductId()) + "（待确认）");
+                return true;
+            } catch (Exception e) {
+                log.warn("Match queue candidate confirm failed shopName={} itemId={} offerId={}: {}",
+                        shopName, itemId, cand.getProductId(), e.getMessage());
+            }
+        }
+        return false;
+    }
+
+    private Set<String> resolveScopeIds(ShopMatchJob job) {
+        if (job == null) {
+            return Collections.emptySet();
+        }
+        if (StringUtils.isNotBlank(job.getScopeItemIdsJson())) {
+            try {
+                List<String> ids = JSON.parseArray(job.getScopeItemIdsJson(), String.class);
+                if (ids == null || ids.isEmpty()) {
+                    return Collections.emptySet();
+                }
+                return new HashSet<>(ids);
+            } catch (Exception e) {
+                log.warn("Invalid scope_item_ids_json jobId={}: {}", job.getId(), e.getMessage());
+                return Collections.emptySet();
+            }
+        }
+        if (StringUtils.isNotBlank(job.getScopeItemId())) {
+            return Set.of(job.getScopeItemId());
+        }
+        return Collections.emptySet();
     }
 
     private MatchJobProgressVO toProgress(ShopMatchJob job) {

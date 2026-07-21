@@ -1,15 +1,18 @@
 package com.tang.plugin.controller.match;
 
 import com.tang.plugin.domain.dto.match.SkuAutoAlignResultVO;
+import com.tang.plugin.domain.dto.match.SkuBindDTO;
 import com.tang.plugin.domain.dto.match.SkuProductOverviewVO;
 import com.tang.plugin.domain.dto.match.sku.OfferDetailVO;
 import com.tang.plugin.service.match.SkuBindingOverviewService;
 import com.tang.plugin.service.match.sku.Crossborder1688ProductClient;
 import com.tang.plugin.service.match.sku.SkuAutoAlignService;
+import com.tang.plugin.service.match.sku.SkuManualBindService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,6 +35,8 @@ public class SkuBindingController {
     private SkuAutoAlignService skuAutoAlignService;
     @Resource
     private Crossborder1688ProductClient crossborder1688ProductClient;
+    @Resource
+    private SkuManualBindService skuManualBindService;
 
     @GetMapping("/overview")
     public List<SkuProductOverviewVO> overview(@RequestParam String shopName) {
@@ -59,6 +64,12 @@ public class SkuBindingController {
     @PostMapping("/unbind")
     public void unbind(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
         skuAutoAlignService.unbind(shopName, thirdPlatformSkuId);
+    }
+
+    /** Manual SKU pick from /sku-align: writes ACTIVE binding with itemGet audit metadata. */
+    @PostMapping("/bind")
+    public void bind(@RequestBody SkuBindDTO dto) {
+        skuManualBindService.bind(dto);
     }
 
     /**

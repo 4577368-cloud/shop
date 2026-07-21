@@ -15,5 +15,9 @@ public class SkuProductOverviewVO {
     private String thirdPlatformItemId;
     private String title;
     private String imageUrl;
+    /** Product-level Tangbuy offer id (from any bound variant); used by SKU picker. */
+    private String tangbuyProductId;
+    /** Tangbuy detail URL for itemGet; resolved from bound variants' audit reason. */
+    private String detailUrl;
     private List<SkuVariantVO> variants;
 }

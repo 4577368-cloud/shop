@@ -94,10 +94,25 @@ public class SkuBindingOverviewService {
             for (ThirdPlatformSku sku : variants) {
                 variantVos.add(toVariantVO(sku, bindingBySkuId.get(sku.getThirdPlatformSkuId()), candidateCache));
             }
+            String tangbuyProductId = null;
+            String detailUrl = null;
+            for (SkuVariantVO v : variantVos) {
+                if (v.getBound() == null) {
+                    continue;
+                }
+                if (tangbuyProductId == null && StringUtils.isNotBlank(v.getBound().getTangbuyProductId())) {
+                    tangbuyProductId = v.getBound().getTangbuyProductId();
+                }
+                if (detailUrl == null && StringUtils.isNotBlank(v.getBound().getDetailUrl())) {
+                    detailUrl = v.getBound().getDetailUrl();
+                }
+            }
             result.add(new SkuProductOverviewVO()
                     .setThirdPlatformItemId(itemId)
                     .setTitle(product != null ? product.getTitle() : null)
                     .setImageUrl(product != null ? product.getPrimaryImageUrl() : null)
+                    .setTangbuyProductId(tangbuyProductId)
+                    .setDetailUrl(detailUrl)
                     .setVariants(variantVos));
         }
         return result;
@@ -147,7 +162,10 @@ public class SkuBindingOverviewService {
             ImageMatchReason.Decoded reason = ImageMatchReason.decode(candidate.getMatchReason());
             vo.setQuerySource(reason.querySource())
                     .setAppliedQuery(reason.appliedQuery())
-                    .setDetailUrl(reason.detailUrl());
+                    .setDetailUrl(reason.detailUrl())
+                    .setTangbuySkuSpec(StringUtils.firstNonBlank(reason.skuSpec(), reason.offerTitle()))
+                    .setOfferImageUrl(reason.imageUrl())
+                    .setOfferPrice(reason.price());
         } else {
             SkuMatchReason.Decoded reason = SkuMatchReason.decode(candidate.getMatchReason());
             vo.setTangbuySkuSpec(reason.specLabel())

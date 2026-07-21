@@ -16,6 +16,8 @@ import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
+import com.tang.plugin.service.match.sku.OfferSkuMatrixValidator;
+import com.tang.plugin.service.skualign.SkuAlignV1Service;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -59,6 +61,10 @@ public class ImageMatchConfirmService {
     private ShopProductBindingRepository shopProductBindingRepository;
     @Resource
     private TxManger txManger;
+    @Resource
+    private OfferSkuMatrixValidator offerSkuMatrixValidator;
+    @Resource
+    private SkuAlignV1Service skuAlignV1Service;
 
     /**
      * Confirm the chosen offer as the ACTIVE binding of the product's default variant.
@@ -77,11 +83,22 @@ public class ImageMatchConfirmService {
         String variantGid = resolveDefaultVariantGid(shopName, itemId);
 
         String tangbuyProductId = dto.getOfferProductId();
-        String tangbuySkuId = StringUtils.firstNonBlank(dto.getOfferSkuId(), dto.getOfferProductId());
+        String resolvedSkuId = StringUtils.trimToNull(dto.getOfferSkuId());
+        if (resolvedSkuId == null) {
+            resolvedSkuId = offerSkuMatrixValidator.resolveDefaultSkuId(tangbuyProductId);
+        }
+        if (resolvedSkuId == null) {
+            throw new CustomException(OfferSkuMatrixValidator.ERR_SKU_NOT_IN_MATRIX
+                    + ": 货源未返回可用 SKU，无法确认匹配");
+        }
+        offerSkuMatrixValidator.assertSkuInOffer(tangbuyProductId, resolvedSkuId);
+        final String tangbuySkuId = resolvedSkuId;
+        String skuSpec = offerSkuMatrixValidator.resolveSkuSpecLabel(tangbuyProductId, tangbuySkuId);
+        String offerTitle = StringUtils.trimToNull(dto.getOfferTitle());
         BigDecimal matchScore = toScore(dto.getSimilarityScore());
         String matchReason = ImageMatchReason.encode(
                 dto.getImageSource(), dto.getQuerySource(), dto.getAppliedQuery(), dto.getDetailUrl(),
-                dto.getOfferImageUrl(), dto.getOfferPrice());
+                dto.getOfferImageUrl(), dto.getOfferPrice(), offerTitle, skuSpec);
         // Auto (scan-time) confirms land as PENDING for human review; explicit user confirms are ACTIVE.
         BindingStatus targetStatus = dto.isAuto() ? BindingStatus.PENDING : BindingStatus.ACTIVE;
 
@@ -117,6 +134,8 @@ public class ImageMatchConfirmService {
                     rebind ? "REBOUND" : "SET", targetStatus, shopName, itemId, variantGid,
                     oldTangbuySkuId, tangbuySkuId, candidateId, matchScore);
         });
+
+        skuAlignV1Service.onProductBindConfirmed(shopName, itemId, "IMAGE");
 
         return view(itemId, variantGid, tangbuyProductId, tangbuySkuId, matchScore,
                 ImageMatchReason.decode(matchReason), targetStatus, BIND_SOURCE_FROM_CANDIDATE);
@@ -250,6 +269,7 @@ public class ImageMatchConfirmService {
                 .setAppliedQuery(reason.appliedQuery())
                 .setDetailUrl(reason.detailUrl())
                 .setOfferImageUrl(reason.imageUrl())
-                .setOfferPrice(reason.price());
+                .setOfferPrice(reason.price())
+                .setOfferTitle(StringUtils.firstNonBlank(reason.skuSpec(), reason.offerTitle()));
     }
 }

@@ -11,6 +11,7 @@ import com.tang.plugin.domain.entity.match.ShopProductMatchCandidate;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.service.match.sku.Crossborder1688ProductClient;
+import com.tang.plugin.service.match.sku.SkuMatcher;
 import jakarta.annotation.Resource;
 import lombok.Data;
 import lombok.experimental.Accessors;
@@ -77,24 +78,29 @@ public class ImageBindingSnapshotBackfillService {
             }
             ShopProductMatchCandidate candidate = found.get();
             ImageMatchReason.Decoded reason = ImageMatchReason.decode(candidate.getMatchReason());
-            if (reason.imageUrl() != null && reason.price() != null) {
+            if (StringUtils.isNotBlank(StringUtils.firstNonBlank(reason.skuSpec(), reason.offerTitle()))
+                    && reason.imageUrl() != null) {
                 result.alreadyOk++;
                 continue;
             }
 
             String offerId = binding.getTangbuyProductId();
+            String skuId = binding.getTangbuySkuId();
             String itemId = binding.getThirdPlatformItemId();
             String image = reason.imageUrl();
             String price = reason.price();
+            String title = reason.offerTitle();
+            String spec = reason.skuSpec();
             String origin = null;
 
             // 1) preferred: re-run image search and match the bound offer.
-            if (image == null || price == null) {
+            if (image == null || price == null || title == null) {
                 try {
                     ImageSearchProductVO hit = findOfferInSearch(shopName, itemId, offerId);
                     if (hit != null) {
                         if (image == null) image = StringUtils.trimToNull(hit.getImageUrl());
                         if (price == null) price = StringUtils.trimToNull(hit.getPrice());
+                        if (title == null) title = StringUtils.trimToNull(hit.getTitle());
                         origin = "SEARCH";
                     }
                 } catch (Exception e) {
@@ -104,12 +110,13 @@ public class ImageBindingSnapshotBackfillService {
             }
 
             // 2) fallback: derive from offer detail.
-            if (image == null || price == null) {
+            if (image == null || price == null || spec == null) {
                 try {
                     OfferDetailVO detail = crossborder1688ProductClient.queryProductDetail(offerId, COUNTRY);
                     if (image == null) image = bestDetailImage(detail);
                     if (price == null) price = bestDetailPrice(detail);
-                    if (image != null || price != null) {
+                    if (spec == null) spec = bestSkuSpec(detail, skuId);
+                    if (image != null || price != null || spec != null) {
                         origin = origin == null ? "DETAIL" : origin + "+DETAIL";
                     }
                 } catch (Exception e) {
@@ -118,13 +125,13 @@ public class ImageBindingSnapshotBackfillService {
                 }
             }
 
-            if (image == null && price == null) {
+            if (image == null && price == null && title == null && spec == null) {
                 result.unresolved++;
                 continue;
             }
 
             String updated = ImageMatchReason.encode(reason.imageSource(), reason.querySource(),
-                    reason.appliedQuery(), reason.detailUrl(), image, price);
+                    reason.appliedQuery(), reason.detailUrl(), image, price, title, spec);
             shopProductMatchCandidateRepository.updateMatchReason(candidate.getId(), updated);
             result.backfilled++;
             if (origin != null && origin.startsWith("SEARCH")) {
@@ -186,6 +193,29 @@ public class ImageBindingSnapshotBackfillService {
             }
         }
         return min == null ? null : min.stripTrailingZeros().toPlainString();
+    }
+
+    private static String bestSkuSpec(OfferDetailVO detail, String skuId) {
+        if (detail == null || detail.getSkus() == null || detail.getSkus().isEmpty()) {
+            return null;
+        }
+        if (StringUtils.isNotBlank(skuId)) {
+            for (OfferSkuVO sku : detail.getSkus()) {
+                if (sku == null || StringUtils.isBlank(sku.getSkuId())) {
+                    continue;
+                }
+                if (skuId.trim().equals(sku.getSkuId().trim())
+                        || skuId.trim().equals(String.valueOf(sku.getSkuId()).trim())) {
+                    String label = SkuMatcher.specLabel(sku);
+                    return StringUtils.isNotBlank(label) ? label.trim() : null;
+                }
+            }
+        }
+        if (detail.getSkus().size() == 1) {
+            String label = SkuMatcher.specLabel(detail.getSkus().get(0));
+            return StringUtils.isNotBlank(label) ? label.trim() : null;
+        }
+        return null;
     }
 
     private static BigDecimal parse(String raw) {
