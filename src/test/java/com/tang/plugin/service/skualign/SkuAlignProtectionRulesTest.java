@@ -48,4 +48,20 @@ class SkuAlignProtectionRulesTest {
                 .setBindingState(VariantBindingState.ALIGNED);
         assertFalse(SkuAlignProtectionRules.canConfirmSuggestion(locked, VariantReviewState.SUGGESTED));
     }
+
+    @Test
+    void highConfidenceAutoActivatesRegardlessOfOrigin() {
+        assertTrue(SkuAlignProtectionRules.mayAutoActivateBinding(
+                false, SkuAlignProtectionRules.ConfidenceTier.HIGH));
+        assertTrue(SkuAlignProtectionRules.mayAutoActivateBinding(
+                true, SkuAlignProtectionRules.ConfidenceTier.HIGH));
+    }
+
+    @Test
+    void mediumConfidenceNeverAutoActivates() {
+        assertFalse(SkuAlignProtectionRules.mayAutoActivateBinding(
+                true, SkuAlignProtectionRules.ConfidenceTier.MEDIUM));
+        assertFalse(SkuAlignProtectionRules.mayAutoActivateBinding(
+                false, SkuAlignProtectionRules.ConfidenceTier.MEDIUM));
+    }
 }

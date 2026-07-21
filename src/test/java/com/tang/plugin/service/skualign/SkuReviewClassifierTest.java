@@ -16,13 +16,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SkuReviewClassifierTest {
 
     @Test
-    void matchedExternalProduct_suggestedNotAutoActive() {
+    void matchedExternalProduct_highConfidenceAutoActive() {
         ThirdPlatformSku variant = shopifySku("v1", "Red", "M");
         List<OfferSkuVO> offerSkus = List.of(offerSku("sku-red-m", "Red", "M"));
         VariantAlignment alignment = SkuMatcher.align(List.of(variant), offerSkus).get(0);
 
         SkuReviewClassifier.Classification c = SkuReviewClassifier.classify(
                 variant, offerSkus, alignment, "offer-1", false, null);
+
+        assertEquals(VariantReviewState.RESOLVED, c.reviewState());
+        assertTrue(c.writeV1ActiveBinding());
+        assertTrue(!c.writeLegacyPending());
+    }
+
+    @Test
+    void matchedExternalProduct_mediumConfidenceSuggested() {
+        ThirdPlatformSku variant = shopifySku("v5", "Red", "M", "StyleA");
+        List<OfferSkuVO> offerSkus = List.of(
+                offerSku("sku-red-m-b", "Red", "M", "StyleB"),
+                offerSku("sku-red-s-a", "Red", "S", "StyleA"));
+        VariantAlignment alignment = SkuMatcher.align(List.of(variant), offerSkus).get(0);
+
+        assertTrue(alignment.matched());
+        assertTrue(alignment.score() >= 0.50d && alignment.score() < 0.80d);
+
+        SkuReviewClassifier.Classification c = SkuReviewClassifier.classify(
+                variant, offerSkus, alignment, "offer-5", false, null);
 
         assertEquals(VariantReviewState.SUGGESTED, c.reviewState());
         assertTrue(c.writeLegacyPending());
@@ -63,7 +82,7 @@ class SkuReviewClassifierTest {
     }
 
     @Test
-    void supplementOfferMatch_externalSuggestedMultiSource() {
+    void supplementOfferMatch_externalHighConfidenceAutoActive() {
         ThirdPlatformSku variant = shopifySku("v4", "Blue", "XXL");
         List<OfferSkuVO> supplementSkus = List.of(
                 offerSku("sku-blue-xxl", "Blue", "XXL"),
@@ -73,7 +92,8 @@ class SkuReviewClassifierTest {
         SkuReviewClassifier.Classification c = SkuReviewClassifier.classifySupplementOffer(
                 variant, supplementSkus, alignment, "offer-sup", false, null);
 
-        assertEquals(VariantReviewState.SUGGESTED, c.reviewState());
+        assertEquals(VariantReviewState.RESOLVED, c.reviewState());
+        assertTrue(c.writeV1ActiveBinding());
         assertEquals(com.tang.plugin.enums.skualign.VariantBindingState.MULTI_SOURCE, c.effectiveBindingState());
         assertEquals(com.tang.plugin.enums.skualign.SourceRole.SUPPLEMENT, c.effectiveSourceRole());
     }

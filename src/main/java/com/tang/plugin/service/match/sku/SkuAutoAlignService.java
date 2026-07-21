@@ -18,6 +18,7 @@ import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.repository.skualign.VariantAlignmentReviewRepository;
 import com.tang.plugin.repository.skualign.VariantSkuBindingRepository;
 import com.tang.plugin.service.skualign.ProductPrimaryOfferResolver;
+import com.tang.plugin.service.skualign.SkuAlignProtectionRules;
 import com.tang.plugin.enums.skualign.VariantReviewState;
 import com.tang.plugin.service.match.sku.SkuMatcher.VariantAlignment;
 import jakarta.annotation.Resource;
@@ -98,6 +99,7 @@ public class SkuAutoAlignService {
 
         List<VariantAlignment> alignments = SkuMatcher.align(variants, detail.getSkus());
         String detailUrl = "https://detail.1688.com/offer/" + resolvedOffer + ".html";
+        boolean singleSkuOffer = detail.getSkus().size() == 1;
 
         List<SkuAutoAlignItemVO> items = new ArrayList<>();
         int[] matched = {0};
@@ -110,7 +112,7 @@ public class SkuAutoAlignService {
                         .setScore(toScore(a.score()));
                 if (a.matched()) {
                     item.setTangbuySkuId(a.skuId()).setTangbuySkuSpec(a.specLabel());
-                    persist(shopName, thirdPlatformItemId, resolvedOffer, a, detailUrl);
+                    persist(shopName, thirdPlatformItemId, resolvedOffer, a, detailUrl, singleSkuOffer);
                     matched[0]++;
                 }
                 items.add(item);
@@ -128,7 +130,7 @@ public class SkuAutoAlignService {
     }
 
     /**
-     * Dual-write helper for V1 engine: persist legacy PENDING RULE bindings for matched variants only.
+     * Dual-write helper for V1 engine: legacy MEDIUM-confidence matches → PENDING (needs_review).
      */
     public void persistRuleMatches(String shopName,
                                    String thirdPlatformItemId,
@@ -253,8 +255,13 @@ public class SkuAutoAlignService {
         });
     }
 
-    private void persist(String shopName, String itemId, String offerId, VariantAlignment a, String detailUrl) {
-        persist(shopName, itemId, offerId, a, detailUrl, BindingStatus.PENDING);
+    private void persist(String shopName,
+                         String itemId,
+                         String offerId,
+                         VariantAlignment a,
+                         String detailUrl,
+                         boolean singleSkuOffer) {
+        persist(shopName, itemId, offerId, a, detailUrl, resolveLegacyBindStatus(a, singleSkuOffer));
     }
 
     private void persist(String shopName,
@@ -294,6 +301,15 @@ public class SkuAutoAlignService {
                 .setCandidateId(candidateId)
                 .setBindStatus(bindStatus);
         shopProductBindingRepository.upsert(binding, bindStatus);
+    }
+
+    /** HIGH / single-SKU → ACTIVE; MEDIUM → PENDING (needs_review). */
+    static BindingStatus resolveLegacyBindStatus(VariantAlignment alignment, boolean singleSkuOffer) {
+        SkuAlignProtectionRules.ConfidenceTier tier =
+                SkuAlignProtectionRules.ConfidenceTier.fromScore(alignment.score(), singleSkuOffer);
+        return tier == SkuAlignProtectionRules.ConfidenceTier.HIGH
+                ? BindingStatus.ACTIVE
+                : BindingStatus.PENDING;
     }
 
     private static BigDecimal toScore(double score) {

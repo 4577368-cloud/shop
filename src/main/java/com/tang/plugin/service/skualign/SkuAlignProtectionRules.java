@@ -49,13 +49,11 @@ public final class SkuAlignProtectionRules {
     }
 
     /**
-     * External-origin products: even HIGH confidence must not auto-ACTIVE without user confirm.
+     * HIGH confidence (incl. single-SKU offers) auto-activates for all shop origins.
+     * MEDIUM and below stay in review — {@code internalOrigin} kept for call-site compat only.
      */
     public static boolean mayAutoActivateBinding(boolean internalOrigin, ConfidenceTier tier) {
-        if (tier != ConfidenceTier.HIGH) {
-            return false;
-        }
-        return internalOrigin;
+        return tier == ConfidenceTier.HIGH;
     }
 
     public enum ConfidenceTier {
