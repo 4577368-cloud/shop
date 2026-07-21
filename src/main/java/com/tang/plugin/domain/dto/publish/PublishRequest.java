@@ -25,4 +25,11 @@ public class PublishRequest {
     private String tangbuyUrl;
     private String supplierShop;
     private String upstreamPlatform;
+    private String skuAttr;
+    private String barcode;
+    /** Rich HTML from browser itemGet (Tangbuy product detail). */
+    private String descriptionHtml;
+    private String offerId1688;
+    /** Tangbuy SKUs → Shopify variants (from itemGet productSkus). */
+    private List<PublishVariantSnapshot> variants;
 }

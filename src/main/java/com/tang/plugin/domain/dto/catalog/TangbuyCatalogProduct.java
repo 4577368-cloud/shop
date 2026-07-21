@@ -31,4 +31,6 @@ public class TangbuyCatalogProduct {
     private String supplierShop;
     private String upstreamPlatform;
     private String barcode;
+    /** Rich HTML from browser itemGet; used as Shopify description when present. */
+    private String descriptionHtml;
 }

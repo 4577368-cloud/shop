@@ -5,6 +5,8 @@ import com.tang.plugin.domain.dto.catalog.TangbuyCatalogProduct;
 import com.tang.plugin.domain.dto.publish.PublishRequest;
 import com.tang.plugin.domain.dto.publish.PublishResultVO;
 import com.tang.plugin.domain.dto.publish.ShopifyCreateProductResult;
+import com.tang.plugin.domain.dto.publish.PublishVariantSnapshot;
+import com.tang.plugin.domain.dto.publish.ShopifyVariantCreateInput;
 import com.tang.plugin.domain.entity.pricing.PricingTemplate;
 import com.tang.plugin.domain.entity.publish.ProductPublishRecord;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
@@ -16,6 +18,7 @@ import com.tang.plugin.service.pricing.PricingTemplateService;
 import com.tang.plugin.service.publish.component.shopify.ShopifyProductPublishComponent;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
@@ -66,7 +69,8 @@ public class CatalogPublishService {
         }
 
         PricingTemplate template = pricingTemplateService.getEffective(shopName);
-        BigDecimal salePrice = priceCalculator.calculate(candidate.getPrice(), template);
+        List<ShopifyVariantCreateInput> variantInputs = buildVariantInputs(request, candidate, template);
+        BigDecimal salePrice = variantInputs.get(0).getSalePrice();
 
         ProductPublishRecord record = productPublishRecordService.getOrCreate(
                 snapshot(shopName, candidate, salePrice, template.getTargetCurrency()));
@@ -104,8 +108,8 @@ public class CatalogPublishService {
         try {
             ShopifyCreateProductResult created = shopifyProductPublishComponent.createSellableProduct(
                     shopName, auth.getShopDomain(), auth.getAccessToken(),
-                    candidate.getTitle(), salePrice, sanitizeSku(candidateId), candidate.getBarcode(),
-                    buildDescriptionHtml(candidate), resolveImageUrls(candidate));
+                    candidate.getTitle(), resolveDescriptionHtml(candidate),
+                    resolveImageUrls(candidate), variantInputs);
 
             productPublishRecordService.markPublished(record.getId(), created.getProductId(),
                     created.getHandle(), created.getVariantId(), created.getInventoryItemId());
@@ -153,10 +157,61 @@ public class CatalogPublishService {
                     .setImageUrls(imageUrls.isEmpty() ? null : imageUrls)
                     .setTangbuyUrl(StringUtils.trimToNull(request.getTangbuyUrl()))
                     .setSupplierShop(StringUtils.trimToNull(request.getSupplierShop()))
-                    .setUpstreamPlatform(StringUtils.trimToNull(request.getUpstreamPlatform()));
+                    .setUpstreamPlatform(StringUtils.trimToNull(request.getUpstreamPlatform()))
+                    .setSkuAttr(StringUtils.trimToNull(request.getSkuAttr()))
+                    .setBarcode(StringUtils.trimToNull(request.getBarcode()))
+                    .setDescriptionHtml(StringUtils.trimToNull(request.getDescriptionHtml()))
+                    .setOfferId1688(StringUtils.trimToNull(request.getOfferId1688()))
+                    .setSkuId(resolvePrimarySkuId(request));
         }
         return tangbuyCatalogService.findById(candidateId)
                 .orElseThrow(() -> new CustomException("candidate not found, candidateId=" + candidateId));
+    }
+
+    private List<ShopifyVariantCreateInput> buildVariantInputs(PublishRequest request,
+                                                             TangbuyCatalogProduct candidate,
+                                                             PricingTemplate template) {
+        List<PublishVariantSnapshot> snapshots = request.getVariants();
+        if (CollectionUtils.isNotEmpty(snapshots)) {
+            List<ShopifyVariantCreateInput> out = new ArrayList<>();
+            for (PublishVariantSnapshot snap : snapshots) {
+                if (snap == null) {
+                    continue;
+                }
+                BigDecimal procurement = snap.getPrice() != null ? snap.getPrice() : candidate.getPrice();
+                BigDecimal variantSale = priceCalculator.calculate(procurement, template);
+                if (variantSale == null) {
+                    throw new CustomException("missing procurement price for sku="
+                            + StringUtils.defaultString(snap.getSkuId()));
+                }
+                out.add(new ShopifyVariantCreateInput()
+                        .setSalePrice(variantSale)
+                        .setSku(sanitizeSku(snap.getSkuId()))
+                        .setBarcode(StringUtils.trimToNull(snap.getBarcode()))
+                        .setOptionValues(snap.getOptionValues()));
+            }
+            if (!out.isEmpty()) {
+                return out;
+            }
+        }
+        BigDecimal sale = priceCalculator.calculate(candidate.getPrice(), template);
+        if (sale == null) {
+            throw new CustomException("missing procurement price, cannot price candidate="
+                    + candidate.getCandidateId());
+        }
+        return List.of(new ShopifyVariantCreateInput()
+                .setSalePrice(sale)
+                .setSku(sanitizeSku(candidate.getCandidateId()))
+                .setBarcode(candidate.getBarcode())
+                .setOptionValues(List.of()));
+    }
+
+    private static String resolvePrimarySkuId(PublishRequest request) {
+        if (CollectionUtils.isEmpty(request.getVariants())) {
+            return null;
+        }
+        PublishVariantSnapshot first = request.getVariants().get(0);
+        return first == null ? null : StringUtils.trimToNull(first.getSkuId());
     }
 
     private static List<String> resolveImageUrls(TangbuyCatalogProduct candidate) {
@@ -233,8 +288,24 @@ public class CatalogPublishService {
     }
 
     /**
-     * Product description from the candidate: 规格 / 供应商 / 货源平台 / Tangbuy 链接.
-     * Values are HTML-escaped. Returns null when all fields are blank.
+     * Product description: prefer rich itemGet HTML; else stub from 规格 / 供应商 / 链接.
+     */
+    private static String resolveDescriptionHtml(TangbuyCatalogProduct c) {
+        String rich = StringUtils.trimToNull(c.getDescriptionHtml());
+        if (rich != null) {
+            if (StringUtils.isNotBlank(c.getTangbuyUrl()) && !rich.contains(c.getTangbuyUrl())) {
+                String url = c.getTangbuyUrl().trim();
+                rich = rich + "<p>货源链接：<a href=\"" + escapeHtml(url)
+                        + "\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                        + escapeHtml(url) + "</a></p>";
+            }
+            return rich;
+        }
+        return buildDescriptionHtml(c);
+    }
+
+    /**
+     * Fallback description when itemGet HTML is unavailable.
      */
     private static String buildDescriptionHtml(TangbuyCatalogProduct c) {
         StringBuilder sb = new StringBuilder();

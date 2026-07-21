@@ -3,7 +3,9 @@ package com.tang.plugin.service.publish.component.shopify;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
+import com.tang.plugin.domain.dto.publish.PublishOptionValue;
 import com.tang.plugin.domain.dto.publish.ShopifyCreateProductResult;
+import com.tang.plugin.domain.dto.publish.ShopifyVariantCreateInput;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -13,20 +15,17 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Shopify product create component — GraphQL only. Creates one minimal sellable product via a single
- * {@code productSet(synchronous:true)} call: product (ACTIVE) + one default option + one variant with
- * price, sku, optional barcode and inventory NOT tracked (always purchasable). Optionally enriches
- * with a descriptionHtml and a gallery of images (M1-4.1). No inventory quantities, no multi-variant.
- *
- * <p>Success is judged strictly: top-level errors empty (enforced by {@link ShopifyGraphqlClient}),
- * userErrors empty, product present, first variant present, and both variant id and inventoryItem id
- * present. Any miss throws so the caller takes the failure path. Media is processed asynchronously by
- * Shopify and is intentionally NOT part of the success gate, so a failed/late image never blocks the
- * sellable product (best-effort images).
+ * Shopify product create component — GraphQL only. Creates a sellable product via
+ * {@code productSet(synchronous:true)}: ACTIVE product + options/variants (1..N) with inventory NOT
+ * tracked. Optionally enriches with descriptionHtml and a gallery (best-effort, not gated on).
  */
 @Slf4j
 @Component
@@ -38,7 +37,7 @@ public class ShopifyProductPublishComponent {
                 product {
                   id
                   handle
-                  variants(first: 1) {
+                  variants(first: 100) {
                     nodes { id inventoryItem { id } }
                   }
                 }
@@ -50,34 +49,59 @@ public class ShopifyProductPublishComponent {
     private static final String DEFAULT_OPTION_NAME = "Title";
     private static final String DEFAULT_OPTION_VALUE = "Default Title";
     private static final int MAX_IMAGES = 10;
+    private static final int MAX_OPTIONS = 3;
+    private static final int MAX_VARIANTS = 100;
 
     @Resource
     private ShopifyGraphqlClient shopifyGraphqlClient;
 
     public ShopifyCreateProductResult createSellableProduct(String shopName, String shopDomain,
                                                             String accessToken, String title,
-                                                            BigDecimal price, String sku, String barcode,
-                                                            String descriptionHtml, List<String> imageUrls) {
+                                                            String descriptionHtml, List<String> imageUrls,
+                                                            List<ShopifyVariantCreateInput> variants) {
         if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken)) {
             throw new CustomException("Shopify create product missing credentials, shopName=" + shopName);
         }
         if (StringUtils.isBlank(title)) {
             throw new CustomException("Shopify create product missing title, shopName=" + shopName);
         }
-        if (price == null) {
-            throw new CustomException("Shopify create product missing price, shopName=" + shopName);
+        if (CollectionUtils.isEmpty(variants)) {
+            throw new CustomException("Shopify create product missing variants, shopName=" + shopName);
+        }
+        for (ShopifyVariantCreateInput v : variants) {
+            if (v.getSalePrice() == null) {
+                throw new CustomException("Shopify create product missing variant price, shopName=" + shopName);
+            }
         }
 
         JSONObject variables = new JSONObject();
-        variables.put("input", buildInput(title, price, sku, barcode, descriptionHtml, imageUrls));
+        variables.put("input", buildInput(title, descriptionHtml, imageUrls, variants));
 
         JSONObject response = shopifyGraphqlClient.execute(
                 shopName, shopDomain, accessToken, CREATE_SELLABLE_PRODUCT, variables);
         return parseStrict(shopName, response);
     }
 
-    private static JSONObject buildInput(String title, BigDecimal price, String sku, String barcode,
-                                         String descriptionHtml, List<String> imageUrls) {
+    private static JSONObject buildInput(String title, String descriptionHtml, List<String> imageUrls,
+                                         List<ShopifyVariantCreateInput> variants) {
+        if (useDefaultSingleVariant(variants)) {
+            ShopifyVariantCreateInput v = variants.get(0);
+            return buildDefaultSingleVariantInput(title, descriptionHtml, imageUrls, v);
+        }
+        return buildMultiVariantInput(title, descriptionHtml, imageUrls, variants);
+    }
+
+    private static boolean useDefaultSingleVariant(List<ShopifyVariantCreateInput> variants) {
+        if (variants.size() != 1) {
+            return false;
+        }
+        List<PublishOptionValue> opts = variants.get(0).getOptionValues();
+        return CollectionUtils.isEmpty(opts);
+    }
+
+    private static JSONObject buildDefaultSingleVariantInput(String title, String descriptionHtml,
+                                                             List<String> imageUrls,
+                                                             ShopifyVariantCreateInput v) {
         JSONObject optionValue = new JSONObject();
         optionValue.put("name", DEFAULT_OPTION_VALUE);
         JSONObject option = new JSONObject();
@@ -92,12 +116,12 @@ public class ShopifyProductPublishComponent {
         inventoryItem.put("tracked", false);
 
         JSONObject variant = new JSONObject();
-        variant.put("price", price.toPlainString());
-        if (StringUtils.isNotBlank(sku)) {
-            variant.put("sku", sku);
+        variant.put("price", v.getSalePrice().toPlainString());
+        if (StringUtils.isNotBlank(v.getSku())) {
+            variant.put("sku", v.getSku());
         }
-        if (StringUtils.isNotBlank(barcode)) {
-            variant.put("barcode", barcode);
+        if (StringUtils.isNotBlank(v.getBarcode())) {
+            variant.put("barcode", v.getBarcode());
         }
         variant.put("optionValues", JSONArray.of(variantOptionValue));
         variant.put("inventoryItem", inventoryItem);
@@ -110,13 +134,122 @@ public class ShopifyProductPublishComponent {
         }
         input.put("productOptions", JSONArray.of(option));
         input.put("variants", JSONArray.of(variant));
+        attachFiles(input, title, imageUrls);
+        return input;
+    }
 
+    private static JSONObject buildMultiVariantInput(String title, String descriptionHtml,
+                                                     List<String> imageUrls,
+                                                     List<ShopifyVariantCreateInput> variants) {
+        List<ShopifyVariantCreateInput> capped = variants.size() > MAX_VARIANTS
+                ? variants.subList(0, MAX_VARIANTS)
+                : variants;
+
+        LinkedHashMap<String, LinkedHashSet<String>> optionMap = new LinkedHashMap<>();
+        for (ShopifyVariantCreateInput v : capped) {
+            if (CollectionUtils.isEmpty(v.getOptionValues())) {
+                continue;
+            }
+            for (PublishOptionValue ov : v.getOptionValues()) {
+                if (ov == null || StringUtils.isAnyBlank(ov.getOptionName(), ov.getValue())) {
+                    continue;
+                }
+                optionMap.computeIfAbsent(ov.getOptionName().trim(), k -> new LinkedHashSet<>())
+                        .add(ov.getValue().trim());
+            }
+        }
+
+        if (optionMap.isEmpty()) {
+            return buildDefaultSingleVariantInput(title, descriptionHtml, imageUrls, capped.get(0));
+        }
+
+        List<String> optionNames = new ArrayList<>(optionMap.keySet());
+        if (optionNames.size() > MAX_OPTIONS) {
+            optionNames = optionNames.subList(0, MAX_OPTIONS);
+        }
+        Set<String> allowedOptions = Set.copyOf(optionNames);
+
+        JSONArray productOptions = new JSONArray();
+        for (String optionName : optionNames) {
+            JSONObject option = new JSONObject();
+            option.put("name", optionName);
+            JSONArray values = new JSONArray();
+            for (String value : optionMap.get(optionName)) {
+                JSONObject vo = new JSONObject();
+                vo.put("name", value);
+                values.add(vo);
+            }
+            option.put("values", values);
+            productOptions.add(option);
+        }
+
+        JSONArray variantArray = new JSONArray();
+        Set<String> seenCombos = new LinkedHashSet<>();
+        for (ShopifyVariantCreateInput v : capped) {
+            JSONArray optionValues = new JSONArray();
+            List<String> comboParts = new ArrayList<>();
+            if (CollectionUtils.isNotEmpty(v.getOptionValues())) {
+                for (PublishOptionValue ov : v.getOptionValues()) {
+                    if (ov == null || StringUtils.isAnyBlank(ov.getOptionName(), ov.getValue())) {
+                        continue;
+                    }
+                    String name = ov.getOptionName().trim();
+                    String value = ov.getValue().trim();
+                    if (!allowedOptions.contains(name)) {
+                        continue;
+                    }
+                    JSONObject ovv = new JSONObject();
+                    ovv.put("optionName", name);
+                    ovv.put("name", value);
+                    optionValues.add(ovv);
+                    comboParts.add(name + "=" + value);
+                }
+            }
+            if (optionValues.isEmpty()) {
+                continue;
+            }
+            String comboKey = String.join("|", comboParts);
+            if (!seenCombos.add(comboKey)) {
+                continue;
+            }
+
+            JSONObject inventoryItem = new JSONObject();
+            inventoryItem.put("tracked", false);
+
+            JSONObject variant = new JSONObject();
+            variant.put("price", v.getSalePrice().toPlainString());
+            if (StringUtils.isNotBlank(v.getSku())) {
+                variant.put("sku", v.getSku());
+            }
+            if (StringUtils.isNotBlank(v.getBarcode())) {
+                variant.put("barcode", v.getBarcode());
+            }
+            variant.put("optionValues", optionValues);
+            variant.put("inventoryItem", inventoryItem);
+            variantArray.add(variant);
+        }
+
+        if (variantArray.isEmpty()) {
+            return buildDefaultSingleVariantInput(title, descriptionHtml, imageUrls, capped.get(0));
+        }
+
+        JSONObject input = new JSONObject();
+        input.put("title", title);
+        input.put("status", "ACTIVE");
+        if (StringUtils.isNotBlank(descriptionHtml)) {
+            input.put("descriptionHtml", descriptionHtml);
+        }
+        input.put("productOptions", productOptions);
+        input.put("variants", variantArray);
+        attachFiles(input, title, imageUrls);
+        return input;
+    }
+
+    private static void attachFiles(JSONObject input, String title, List<String> imageUrls) {
         List<JSONObject> files = buildImageFiles(title, imageUrls);
         if (!files.isEmpty()) {
-            // Gallery; processed asynchronously by Shopify (best-effort, not gated on).
             input.put("files", new JSONArray(files));
         }
-        return input;
     }
 
     private static List<JSONObject> buildImageFiles(String title, List<String> imageUrls) {
@@ -185,7 +318,8 @@ public class ShopifyProductPublishComponent {
                     + " variantId=" + variantId + " inventoryItemId=" + inventoryItemId);
         }
 
-        log.info("Shopify product created shopName={} productId={} variantId={}", shopName, productId, variantId);
+        log.info("Shopify product created shopName={} productId={} variantCount={} firstVariantId={}",
+                shopName, productId, nodes.size(), variantId);
         return new ShopifyCreateProductResult()
                 .setProductId(productId)
                 .setHandle(handle)
