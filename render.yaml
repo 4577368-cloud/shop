@@ -17,7 +17,7 @@ services:
     envVars:
       # Render also injects PORT automatically; keep Spring aligned
       - key: JAVA_OPTS
-        value: "-XX:MaxRAMPercentage=75.0"
+        value: "-XX:MaxRAMPercentage=60.0 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
       # Activate the persistent PostgreSQL + internal-auth profile
       - key: SPRING_PROFILES_ACTIVE
         value: "prod"

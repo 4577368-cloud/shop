@@ -187,6 +187,8 @@ git push -u origin main
 
 说明：免费实例会休眠；数据现由持久化 PostgreSQL 存储（不再随重启清空）。免费 PostgreSQL 有容量/时限，生产前请评估升档。
 
+**内存（OOM / exit 137）**：Render 免费 Web 实例约 512MB。授权后会异步拉全店商品；若紧接着自动跑全店图搜，容易触发 OOM 被系统杀掉（日志停在 `Async product sync (post-auth) finished` 附近）。默认已关闭授权后自动图搜（`TANG_PLUGIN_MATCH_AUTO_START_AFTER_SYNC=false`），由前端「智能选品」扫描页调用 `POST /api/plugin/match/queue/start`。若仍 OOM，可升档 Starter 或在 Dashboard 将 `JAVA_OPTS` 设为 `-Xmx384m -XX:+UseSerialGC`。
+
 ## 架构红线（与 docs 一致）
 
 1. 只用 `@Resource`，不用 `@Autowired`

@@ -49,6 +49,11 @@ tang:
         polling-fixed-delay-ms: 600000
         polling-window-minutes: 60
         max-pages: 50
+    match:
+      queue:
+        # Off by default: post-auth sync + full-shop image search OOMs on small containers (Render free).
+        # The frontend scan page calls POST /match/queue/start when the user opens 智能选品.
+        auto-start-after-sync: ${TANG_PLUGIN_MATCH_AUTO_START_AFTER_SYNC:false}
       # Local-dev fallback only (Provider prefers JDBC ACTIVE auth)
       test-shops:
         - shop-name: "your-shop"

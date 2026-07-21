@@ -21,6 +21,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -61,11 +62,15 @@ public class ProductSyncService {
     @Resource
     private MatchQueueService matchQueueService;
 
+    @Value("${tang.plugin.match.queue.auto-start-after-sync:false}")
+    private boolean autoStartMatchQueueAfterSync;
+
     /**
      * Fire-and-forget full product pull triggered right after a successful OAuth callback.
      * Runs off the request thread so it never blocks the redirect back to the frontend; any
      * failure is logged and swallowed (the shop is still authorized, sync can be retried later).
-     * On success, enqueues background image-auto-match for unbound products.
+     * Image-auto-match is optional (see {@code tang.plugin.match.queue.auto-start-after-sync});
+     * default off so small PaaS instances are not OOM-killed right after a full catalog pull.
      */
     @Async
     public void asyncFullSyncShopify(String shopName) {
@@ -73,11 +78,17 @@ public class ProductSyncService {
             log.info("Async product sync (post-auth) started shopName={}", shopName);
             syncShopifyByShopName(shopName, null);
             log.info("Async product sync (post-auth) finished shopName={}", shopName);
-            try {
-                matchQueueService.startImageAutoMatch(shopName, null);
-                log.info("Post-auth image match queue started shopName={}", shopName);
-            } catch (Exception e) {
-                log.error("Post-auth image match queue start failed shopName={}", shopName, e);
+            if (autoStartMatchQueueAfterSync) {
+                try {
+                    matchQueueService.startImageAutoMatch(shopName, null);
+                    log.info("Post-auth image match queue started shopName={}", shopName);
+                } catch (Exception e) {
+                    log.error("Post-auth image match queue start failed shopName={}", shopName, e);
+                }
+            } else {
+                log.info(
+                        "Post-auth image match queue skipped (auto-start disabled) shopName={}",
+                        shopName);
             }
         } catch (Exception e) {
             log.error("Async product sync (post-auth) failed shopName={}", shopName, e);
