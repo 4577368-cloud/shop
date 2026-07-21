@@ -22,9 +22,9 @@ public class SkuAlignV1Controller {
         return skuAlignV1Service.overview(shopName, tab);
     }
 
-    @GetMapping("/products/{productId}")
+    @GetMapping("/products/detail")
     public SkuAlignProductDetailVO productDetail(@RequestParam String shopName,
-                                                 @PathVariable String productId) {
+                                                 @RequestParam String productId) {
         return skuAlignV1Service.productDetail(shopName, productId);
     }
 
@@ -40,9 +40,9 @@ public class SkuAlignV1Controller {
     }
 
     /** Step 3 — card expand refresh for a single unresolved product. */
-    @PostMapping("/products/{productId}/expand")
+    @PostMapping("/products/expand")
     public SkuAlignRunAcceptedVO cardExpand(@RequestParam String shopName,
-                                            @PathVariable String productId) {
+                                            @RequestParam String productId) {
         return skuAlignV1Service.triggerCardExpand(shopName, productId);
     }
 
@@ -57,23 +57,25 @@ public class SkuAlignV1Controller {
         return skuAlignV1Service.confirmSuggestions(body);
     }
 
-    @PostMapping("/variants/{variantId}/bind")
-    public void manualBind(@PathVariable String variantId,
+    @PostMapping("/variants/bind")
+    public void manualBind(@RequestParam String variantId,
                            @RequestBody SkuAlignManualBindDTO body) {
         body.setThirdPlatformSkuId(variantId);
         skuAlignV1Service.manualBind(body);
     }
 
-    @PostMapping("/variants/{variantId}/block")
-    public void blockVariant(@PathVariable String variantId,
+    @PostMapping("/variants/block")
+    public void blockVariant(@RequestParam String variantId,
                              @RequestBody SkuAlignBlockVariantDTO body) {
         body.setThirdPlatformSkuId(variantId);
         skuAlignV1Service.blockVariant(body);
     }
 
-    @PostMapping("/products/{productId}/supplement-source")
-    public SkuAlignRunAcceptedVO supplementSource(@PathVariable String productId,
+    @PostMapping("/products/supplement-source")
+    public SkuAlignRunAcceptedVO supplementSource(@RequestParam String shopName,
+                                                  @RequestParam String productId,
                                                   @RequestBody SkuAlignSupplementSourceDTO body) {
+        body.setShopName(shopName);
         return skuAlignV1Service.addSupplementSource(productId, body);
     }
 
