@@ -20,6 +20,7 @@ import com.tang.plugin.enums.skualign.SourceRole;
 import com.tang.plugin.enums.skualign.VariantBindingState;
 import com.tang.plugin.enums.skualign.VariantReviewState;
 import com.tang.plugin.repository.ShopProductBindingRepository;
+import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.repository.skualign.AlignmentCandidateRepository;
 import com.tang.plugin.repository.skualign.AlignmentRunRepository;
@@ -83,6 +84,8 @@ public class SkuAlignEngineService {
     @Resource
     private ProductPrimaryOfferResolver productPrimaryOfferResolver;
     @Resource
+    private ThirdPlatformProductRepository thirdPlatformProductRepository;
+    @Resource
     private TxManger txManger;
 
     @Async
@@ -102,8 +105,13 @@ public class SkuAlignEngineService {
                     alignProduct(runId, req.getShopName(), productId, stats, req);
                 } catch (Exception e) {
                     failedProducts++;
-                    log.warn("SKU align V1 product failed runId={} product={} err={}",
-                            runId, productId, e.getMessage());
+                    log.warn("SKU align V1 product failed runId={} shop={} product={} title={} offer={} err={}",
+                            runId,
+                            req.getShopName(),
+                            productId,
+                            resolveProductTitle(req.getShopName(), productId),
+                            resolvePrimaryOfferHint(req.getShopName(), productId),
+                            e.getMessage());
                 }
             }
             stats.setFailedCount(failedProducts);
@@ -800,5 +808,20 @@ public class SkuAlignEngineService {
             }
         }
         return null;
+    }
+
+    private String resolveProductTitle(String shopName, String productId) {
+        return thirdPlatformProductRepository.findByItem(shopName, productId)
+                .map(p -> StringUtils.defaultIfBlank(p.getTitle(), p.getHandle()))
+                .filter(StringUtils::isNotBlank)
+                .orElse("-");
+    }
+
+    private String resolvePrimaryOfferHint(String shopName, String productId) {
+        try {
+            return productPrimaryOfferResolver.resolvePrimaryOffer(shopName, productId);
+        } catch (Exception e) {
+            return "-";
+        }
     }
 }

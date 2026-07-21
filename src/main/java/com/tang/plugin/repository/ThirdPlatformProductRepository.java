@@ -197,6 +197,28 @@ public class ThirdPlatformProductRepository {
                 shopName);
     }
 
+    public Optional<ThirdPlatformProduct> findByItem(String shopName, String itemId) {
+        if (StringUtils.isAnyBlank(shopName, itemId)) {
+            return Optional.empty();
+        }
+        try {
+            ThirdPlatformProduct row = jdbcTemplate.queryForObject(
+                    """
+                    SELECT id, shop_name, shop_type, third_platform_item_id, handle, title, description, status,
+                           currency, min_price, max_price, min_price_local, max_price_local,
+                           min_weight_grams, max_weight_grams, primary_image_url, updated_at, del_flag
+                    FROM third_platform_product
+                    WHERE shop_name = ? AND third_platform_item_id = ? AND del_flag = 0
+                    """,
+                    ROW_MAPPER,
+                    shopName,
+                    itemId);
+            return Optional.ofNullable(row);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
     private Long findId(String shopName, String itemId) {
         if (StringUtils.isAnyBlank(shopName, itemId)) {
             return null;

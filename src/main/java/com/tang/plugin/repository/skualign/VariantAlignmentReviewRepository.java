@@ -10,13 +10,13 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import com.tang.plugin.utils.GeneratedKeySupport;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.HashMap;
@@ -150,7 +150,7 @@ public class VariantAlignmentReviewRepository {
                       requires_user_action, last_run_id, del_flag, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
-                    Statement.RETURN_GENERATED_KEYS);
+                    new String[] { "id" });
             int i = 1;
             ps.setString(i++, review.getShopName());
             ps.setString(i++, review.getThirdPlatformItemId());
@@ -171,9 +171,9 @@ public class VariantAlignmentReviewRepository {
             ps.setTimestamp(i, Timestamp.from(now));
             return ps;
         }, keyHolder);
-        Number key = keyHolder.getKey();
-        if (key != null) {
-            review.setId(key.longValue());
+        Long id = GeneratedKeySupport.resolveId(keyHolder);
+        if (id != null) {
+            review.setId(id);
         }
     }
 
