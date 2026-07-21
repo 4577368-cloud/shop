@@ -15,7 +15,6 @@ import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -62,7 +61,7 @@ public class AlignmentRunRepository {
                       blocked_count, failed_count, created_at, del_flag
                     ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, ?, 0)
                     """,
-                    Statement.RETURN_GENERATED_KEYS);
+                    new String[] { "id" });
             ps.setString(1, run.getShopName());
             ps.setString(2, run.getTriggerType().name());
             ps.setString(3, run.getScopeType());
@@ -73,6 +72,9 @@ public class AlignmentRunRepository {
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
+        if (key == null && keyHolder.getKeys() != null && keyHolder.getKeys().containsKey("id")) {
+            key = (Number) keyHolder.getKeys().get("id");
+        }
         return key != null ? key.longValue() : 0L;
     }
 
