@@ -68,3 +68,7 @@ tang:
       token: ${TANG_PLUGIN_TANGBUY_MALL_TOKEN:}
       connect-timeout-ms: 5000
       read-timeout-ms: 20000
+    # Admin prod-api proxy for Vercel (preferred pool + ES resolve). Token = admin.tangbuy.cc Bearer.
+    tangbuy-admin:
+      base-url: ${TANG_PLUGIN_TANGBUY_ADMIN_BASE_URL:https://admin.tangbuy.cc/prod-api}
+      token: ${TANG_PLUGIN_TANGBUY_ADMIN_TOKEN:}
