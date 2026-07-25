@@ -11,7 +11,9 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -76,6 +78,31 @@ public class ThirdPlatformProductRepository {
                 Integer.class,
                 shopName);
         return count == null ? 0 : count;
+    }
+
+    /**
+     * 按状态分组计数（del_flag = 0）。null/空状态归入 "UNKNOWN"。
+     * 用于 sync 页面真实统计：ACTIVE=发布上架 / ARCHIVED=操作下架 / DRAFT=操作到草稿。
+     */
+    public Map<String, Integer> countByStatus(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return Map.of();
+        }
+        return jdbcTemplate.query(
+                """
+                SELECT COALESCE(status, 'UNKNOWN') AS status, COUNT(*) AS cnt
+                FROM third_platform_product
+                WHERE shop_name = ? AND del_flag = 0
+                GROUP BY COALESCE(status, 'UNKNOWN')
+                """,
+                (rs) -> {
+                    Map<String, Integer> result = new LinkedHashMap<>();
+                    while (rs.next()) {
+                        result.put(rs.getString("status"), rs.getInt("cnt"));
+                    }
+                    return result;
+                },
+                shopName);
     }
 
     /**

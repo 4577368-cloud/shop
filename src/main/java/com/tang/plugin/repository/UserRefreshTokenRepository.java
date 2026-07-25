@@ -91,4 +91,35 @@ public class UserRefreshTokenRepository {
                 "UPDATE user_refresh_token SET del_flag = 1 WHERE user_id = ? AND del_flag = 0",
                 userId);
     }
+
+    /**
+     * 列出用户所有活跃会话（del_flag=0），按 created_at DESC 排序。
+     * 包含已过期但未删除的 token（前端可展示"已过期"状态）。
+     */
+    public java.util.List<UserRefreshToken> listActiveByUserId(Long userId) {
+        return jdbcTemplate.query(
+                """
+                SELECT id, user_id, token_hash, expires_at, created_at, user_agent, ip, del_flag
+                FROM user_refresh_token
+                WHERE user_id = ? AND del_flag = 0
+                ORDER BY created_at DESC, id DESC
+                """,
+                ROW_MAPPER,
+                userId);
+    }
+
+    /**
+     * 按 ID 撤销会话（远程登出）。仅当 token 属于该用户且未撤销时生效。
+     *
+     * @return 影响行数（1=成功，0=token 不存在/不属于该用户/已撤销）
+     */
+    public int revokeByIdAndUser(Long tokenId, Long userId) {
+        return jdbcTemplate.update(
+                """
+                UPDATE user_refresh_token
+                SET del_flag = 1
+                WHERE id = ? AND user_id = ? AND del_flag = 0
+                """,
+                tokenId, userId);
+    }
 }

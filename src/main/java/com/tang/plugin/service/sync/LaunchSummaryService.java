@@ -62,7 +62,9 @@ public class LaunchSummaryService {
                 .setBindings(bindingsFuture.join())
                 .setSkuOverview(skuFuture.join())
                 .setLogisticsAnalysis(logisticsFuture.join())
-                .setPricingTemplate(pricingFuture.join());
+                .setPricingTemplate(pricingFuture.join())
+                .setProductStatusCounts(
+                        thirdPlatformProductRepository.countByStatus(shopName));
 
         log.info(
                 "Launch summary aggregated shopName={} products={} bindings={} elapsedMs={}",

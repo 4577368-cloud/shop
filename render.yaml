@@ -77,3 +77,18 @@ services:
       # P2 CORS 白名单：允许前端域名 + 本地开发。逗号分隔。
       - key: TANG_PLUGIN_CORS_ALLOWED_ORIGINS
         value: "https://ai.tangbuy.com,http://localhost:3000"
+      # P3.2 PayPal 沙盒凭证。生产部署前切到 Live 凭证并改 mode=live。
+      # Client ID 与前端 NEXT_PUBLIC_PAYPAL_CLIENT_ID 同值；Secret 仅后端持有，永不提交。
+      - key: TANG_PLUGIN_PAYPAL_MODE
+        value: "sandbox"
+      - key: TANG_PLUGIN_PAYPAL_CLIENT_ID
+        sync: false
+      - key: TANG_PLUGIN_PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: TANG_PLUGIN_PAYPAL_USD_TO_CNY_RATE
+        value: "6.43"
+      - key: TANG_PLUGIN_PAYPAL_WEBHOOK_ID
+        sync: false
+      # pipispy / 运营中心广告情报（与 shopify .env.local 的 PIPIADS_API_KEY 同值，仅服务端）
+      - key: TANG_PLUGIN_PIPIADS_API_KEY
+        sync: false

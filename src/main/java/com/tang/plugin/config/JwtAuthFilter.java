@@ -52,11 +52,23 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             "/api/plugin/shopify/auth/status"
     );
 
-    /** Path prefixes that require JWT authentication (for future phases). */
+    /**
+     * Path prefixes that require JWT authentication (for future phases).
+     * Webhook endpoints are public but verify their own signature (PayPal Cert-Webhook).
+     */
     private static final String[] PROTECTED_PREFIXES = {
             "/api/plugin/user/",
-            "/api/plugin/billing/"
+            "/api/plugin/billing/",
+            "/api/plugin/marketing/"
     };
+
+    /**
+     * Exact paths that bypass JWT protection even if they fall under a protected prefix.
+     * Currently: PayPal webhook (under /billing/ but called by PayPal, not browsers).
+     */
+    private static final Set<String> PUBLIC_EXACT_PATHS = Set.of(
+            "/api/plugin/billing/paypal/webhook"
+    );
 
     @Resource
     private JwtService jwtService;
@@ -88,6 +100,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private boolean isProtected(HttpServletRequest request) {
         String uri = request.getRequestURI();
+        // Explicit public path (e.g. PayPal webhook) bypasses everything.
+        if (PUBLIC_EXACT_PATHS.contains(uri)) {
+            return false;
+        }
         if (PROTECTED_EXACT_PATHS.contains(uri)) {
             return true;
         }

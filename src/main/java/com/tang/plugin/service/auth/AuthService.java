@@ -3,11 +3,15 @@ package com.tang.plugin.service.auth;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.config.JwtAuthProperties;
 import com.tang.plugin.domain.entity.user.AppUser;
+import com.tang.plugin.domain.entity.user.PasswordResetToken;
 import com.tang.plugin.domain.entity.user.UserRefreshToken;
 import com.tang.plugin.dto.auth.AuthDtos;
+import com.tang.plugin.dto.auth.AuthDtos.ForgotPasswordResponse;
 import com.tang.plugin.dto.auth.AuthDtos.RefreshResponse;
+import com.tang.plugin.dto.auth.AuthDtos.ResetPasswordResponse;
 import com.tang.plugin.dto.auth.AuthDtos.UserResponse;
 import com.tang.plugin.repository.AppUserRepository;
+import com.tang.plugin.repository.PasswordResetTokenRepository;
 import com.tang.plugin.repository.UserRefreshTokenRepository;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,10 +42,15 @@ public class AuthService {
     private static final String DUMMY_HASH =
             "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
+    /** Reset token TTL: 30 minutes. */
+    private static final long RESET_TOKEN_TTL_SECONDS = 1800L;
+
     @Resource
     private AppUserRepository userRepository;
     @Resource
     private UserRefreshTokenRepository refreshTokenRepository;
+    @Resource
+    private PasswordResetTokenRepository passwordResetTokenRepository;
     @Resource
     private PasswordService passwordService;
     @Resource
@@ -140,6 +149,89 @@ public class AuthService {
         // Revoke all sessions after password change (force re-login on other devices).
         refreshTokenRepository.revokeAllByUserId(user.getId());
         log.info("Password changed for user id={}", userId);
+    }
+
+    // ===== Forgot / Reset password (P6) =====
+
+    /**
+     * 忘记密码：生成 reset token。
+     *
+     * <p>防枚举：无论 email 是否存在都返回 200。仅在 email 存在时生成 token + 记日志。
+     *
+     * <p>开发阶段：直接返回 token 供前端跳转 reset 页面。
+     * P7 接入邮件后：改为发送邮件，response 中不返回 token（返回 expiresAt 即可）。
+     */
+    public ForgotPasswordResponse forgotPassword(AuthDtos.ForgotPasswordRequest req,
+                                                  HttpServletRequest httpRequest) {
+        if (req == null || StringUtils.isBlank(req.email())) {
+            throw new CustomException("Email is required", 400, "INVALID_EMAIL");
+        }
+        validateEmail(req.email());
+        String email = req.email().trim().toLowerCase();
+
+        AppUser user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            // 防枚举：记日志但不暴露给前端
+            log.info("Forgot-password for unknown email: {}", maskEmail(email));
+            return new ForgotPasswordResponse(null, null);
+        }
+
+        String rawToken = jwtService.generateRawRefreshToken();  // 32 字节随机
+        String tokenHash = jwtService.hashToken(rawToken);
+
+        PasswordResetToken token = new PasswordResetToken()
+                .setUserId(user.getId())
+                .setTokenHash(tokenHash)
+                .setExpiresAt(Instant.now().plusSeconds(RESET_TOKEN_TTL_SECONDS))
+                .setIp(extractClientIp(httpRequest))
+                .setUserAgent(truncate(httpRequest.getHeader("User-Agent"), 512));
+        passwordResetTokenRepository.insert(token);
+
+        log.info("Password reset token issued: userId={} email={} expiresIn={}min",
+                user.getId(), maskEmail(email), RESET_TOKEN_TTL_SECONDS / 60);
+
+        // 开发阶段：返回 raw token。生产阶段改为发邮件，此处返回 null。
+        return new ForgotPasswordResponse(rawToken, token.getExpiresAt());
+    }
+
+    /**
+     * 重置密码：验证 token + 改密 + 吊销所有会话。
+     *
+     * <p>幂等性：通过 markUsed 的乐观锁保证（used_at IS NULL 才更新）。
+     * 同一 token 重复调用返回错误，不会重复改密。
+     */
+    public ResetPasswordResponse resetPassword(AuthDtos.ResetPasswordRequest req) {
+        if (req == null || StringUtils.isBlank(req.resetToken()) || StringUtils.isBlank(req.newPassword())) {
+            throw new CustomException("resetToken and newPassword are required", 400, "INVALID_REQUEST");
+        }
+        validatePassword(req.newPassword());
+
+        String rawToken = req.resetToken().trim();
+        String tokenHash = jwtService.hashToken(rawToken);
+
+        PasswordResetToken token = passwordResetTokenRepository.findByTokenHash(tokenHash)
+                .orElseThrow(() -> new CustomException("Invalid or expired reset token", 400, "INVALID_TOKEN"));
+
+        if (token.getUsedAt() != null) {
+            throw new CustomException("Reset token already used", 400, "TOKEN_ALREADY_USED");
+        }
+        if (token.getExpiresAt().isBefore(Instant.now())) {
+            throw new CustomException("Reset token expired", 400, "TOKEN_EXPIRED");
+        }
+
+        // 一次性标记（乐观锁，防并发重放）
+        int marked = passwordResetTokenRepository.markUsed(tokenHash);
+        if (marked == 0) {
+            throw new CustomException("Reset token already used (concurrent)", 409, "TOKEN_ALREADY_USED");
+        }
+
+        AppUser user = requireUser(token.getUserId());
+        userRepository.updatePasswordHash(user.getId(), passwordService.hash(req.newPassword()));
+        // 吊销所有会话：强制所有设备重新登录
+        refreshTokenRepository.revokeAllByUserId(user.getId());
+
+        log.info("Password reset completed: userId={}", user.getId());
+        return new ResetPasswordResponse(true);
     }
 
     // ===== Refresh =====

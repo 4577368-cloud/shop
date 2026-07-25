@@ -89,6 +89,29 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * 忘记密码（公开接口）。
+     * 无论 email 是否存在都返回 200（防枚举）。
+     * 开发阶段：返回 resetToken 供前端跳转 reset 页面。
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<AuthDtos.ForgotPasswordResponse> forgotPassword(
+            @RequestBody AuthDtos.ForgotPasswordRequest req,
+            HttpServletRequest httpRequest) {
+        return ResponseEntity.ok(authService.forgotPassword(req, httpRequest));
+    }
+
+    /**
+     * 重置密码（公开接口）。
+     * 验证 resetToken + 改密 + 吊销所有会话。
+     * 成功后用户需重新登录。
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<AuthDtos.ResetPasswordResponse> resetPassword(
+            @RequestBody AuthDtos.ResetPasswordRequest req) {
+        return ResponseEntity.ok(authService.resetPassword(req));
+    }
+
     // ===== Helpers =====
 
     private void setAuthCookies(HttpServletResponse response, String accessToken, String refreshToken) {

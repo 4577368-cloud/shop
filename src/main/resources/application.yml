@@ -83,3 +83,17 @@ tang:
         same-site: ${TANG_PLUGIN_COOKIE_SAMESITE:Lax}
         secure: ${TANG_PLUGIN_COOKIE_SECURE:false}
         domain: ${TANG_PLUGIN_COOKIE_DOMAIN:}
+    # P3.2: PayPal 支付网关。mode=sandbox/live。client_id 与浏览器 NEXT_PUBLIC_PAYPAL_CLIENT_ID 同值。
+    paypal:
+      mode: ${TANG_PLUGIN_PAYPAL_MODE:sandbox}
+      client-id: ${TANG_PLUGIN_PAYPAL_CLIENT_ID:}
+      client-secret: ${TANG_PLUGIN_PAYPAL_CLIENT_SECRET:}
+      usd-to-cny-rate: ${TANG_PLUGIN_PAYPAL_USD_TO_CNY_RATE:6.43}
+      webhook-id: ${TANG_PLUGIN_PAYPAL_WEBHOOK_ID:}
+    # pipispy (operations center — key server-side only)
+    pipispy:
+      api-key: ${TANG_PLUGIN_PIPIADS_API_KEY:${PIPIADS_API_KEY:}}
+      data-url: ${TANG_PLUGIN_PIPIADS_DATA_URL:https://www.pipispy.com/open-api/v1/data}
+      credits-url: ${TANG_PLUGIN_PIPIADS_CREDITS_URL:https://www.pipispy.com/open-api/v1/credits-balance}
+      connect-timeout-ms: ${TANG_PLUGIN_PIPIADS_CONNECT_TIMEOUT_MS:8000}
+      read-timeout-ms: ${TANG_PLUGIN_PIPIADS_READ_TIMEOUT_MS:45000}

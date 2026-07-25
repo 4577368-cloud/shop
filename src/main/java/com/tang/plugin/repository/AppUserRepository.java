@@ -125,4 +125,26 @@ public class AppUserRepository {
                 "UPDATE app_user SET last_login_at = ?, updated_at = ? WHERE id = ?",
                 Timestamp.from(Instant.now()), Timestamp.from(Instant.now()), id);
     }
+
+    /**
+     * 更新个人资料字段（仅允许用户可改的字段，不包括 email/password/status）。
+     * null 字段会被 COALESCE 跳过，保持原值。
+     */
+    public int updateProfile(Long id, String name, String avatarUrl, String locale,
+                              String timezone, String currency, String aiResponseLanguage) {
+        return jdbcTemplate.update(
+                """
+                UPDATE app_user
+                SET name         = COALESCE(?, name),
+                    avatar_url   = COALESCE(?, avatar_url),
+                    locale       = COALESCE(?, locale),
+                    timezone     = COALESCE(?, timezone),
+                    currency     = COALESCE(?, currency),
+                    ai_response_language = COALESCE(?, ai_response_language),
+                    updated_at   = ?
+                WHERE id = ?
+                """,
+                name, avatarUrl, locale, timezone, currency, aiResponseLanguage,
+                Timestamp.from(Instant.now()), id);
+    }
 }
