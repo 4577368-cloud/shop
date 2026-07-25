@@ -14,6 +14,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -63,6 +64,21 @@ public class ShopProductMatchCandidateRepository {
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
+    }
+
+    /** Batch variant of {@link #findById} — list回显 must not issue one query per binding. */
+    public List<ShopProductMatchCandidate> listByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<Long> distinct = ids.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(distinct.size(), "?"));
+        return jdbcTemplate.query(
+                "SELECT " + COLUMNS + " FROM shop_product_match_candidate WHERE id IN (" + placeholders + ")",
+                ROW_MAPPER, distinct.toArray());
     }
 
     public List<ShopProductMatchCandidate> listByShopAndStatus(String shopName, MatchStatus status) {

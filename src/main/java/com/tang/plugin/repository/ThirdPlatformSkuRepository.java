@@ -80,6 +80,18 @@ public class ThirdPlatformSkuRepository {
                 ROW_MAPPER, shopName, itemId);
     }
 
+    /** All active variants of a shop in one query — list views must not fan out per product. */
+    public List<ThirdPlatformSku> listByShop(String shopName) {
+        if (StringUtils.isBlank(shopName)) {
+            return List.of();
+        }
+        return jdbcTemplate.query(
+                "SELECT " + COLUMNS + " FROM third_platform_sku "
+                        + "WHERE shop_name = ? AND del_flag = 0 "
+                        + "ORDER BY third_platform_item_id ASC, position ASC NULLS LAST, id ASC",
+                ROW_MAPPER, shopName);
+    }
+
     /**
      * Resolve the owning product item id of a variant (by variant GID). Used to group legacy bindings
      * whose {@code third_platform_item_id} was not recorded. Empty when the variant is not mirrored.

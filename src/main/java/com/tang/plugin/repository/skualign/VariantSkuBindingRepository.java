@@ -87,6 +87,25 @@ public class VariantSkuBindingRepository {
         return out;
     }
 
+    /** Shop-wide variant of {@link #mapActiveByProduct}: productId -> (variantId -> binding). */
+    public Map<String, Map<String, VariantSkuBinding>> mapActiveByShop(String shopName) {
+        Map<String, Map<String, VariantSkuBinding>> out = new HashMap<>();
+        if (StringUtils.isBlank(shopName)) {
+            return out;
+        }
+        List<VariantSkuBinding> rows = jdbcTemplate.query(
+                """
+                SELECT * FROM variant_sku_binding
+                WHERE shop_name = ? AND active = 1 AND del_flag = 0
+                """,
+                ROW_MAPPER, shopName);
+        for (VariantSkuBinding row : rows) {
+            out.computeIfAbsent(row.getThirdPlatformItemId(), k -> new HashMap<>())
+                    .put(row.getThirdPlatformSkuId(), row);
+        }
+        return out;
+    }
+
     public void deactivateByVariant(String shopName, String variantId) {
         jdbcTemplate.update(
                 """

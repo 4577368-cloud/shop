@@ -28,8 +28,12 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * A3-2b: confirm a chosen 1688 image-search offer into a SKU-level {@link ShopProductBinding} (route B).
@@ -195,21 +199,37 @@ public class ImageMatchConfirmService {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("listActiveBindings requires shopName");
         }
+        List<ShopProductBinding> bindings = shopProductBindingRepository.listBindableByShop(shopName);
+        if (bindings.isEmpty()) {
+            return List.of();
+        }
+        // Batch the two lookups this loop needs; per-binding queries made this endpoint O(rows) round
+        // trips (~25s for a 500-variant shop) and the UI fell back to "unlinked" while it waited.
+        Set<String> activeItemIds = new HashSet<>(thirdPlatformProductRepository.listActiveItemIds(shopName));
+        Map<String, String> itemIdBySkuId = new HashMap<>();
+        for (ThirdPlatformSku sku : thirdPlatformSkuRepository.listByShop(shopName)) {
+            itemIdBySkuId.put(sku.getThirdPlatformSkuId(), sku.getThirdPlatformItemId());
+        }
+        Map<Long, ShopProductMatchCandidate> candidateById = new HashMap<>();
+        for (ShopProductMatchCandidate candidate : shopProductMatchCandidateRepository.listByIds(
+                bindings.stream().map(ShopProductBinding::getCandidateId).filter(java.util.Objects::nonNull).toList())) {
+            candidateById.put(candidate.getId(), candidate);
+        }
+
         List<ImageBindingView> views = new ArrayList<>();
-        for (ShopProductBinding binding : shopProductBindingRepository.listBindableByShop(shopName)) {
-            if (!bindingTargetsActiveProduct(shopName, binding)) {
+        for (ShopProductBinding binding : bindings) {
+            String itemId = StringUtils.defaultIfBlank(binding.getThirdPlatformItemId(),
+                    itemIdBySkuId.get(binding.getThirdPlatformSkuId()));
+            if (StringUtils.isBlank(itemId) || !activeItemIds.contains(itemId)) {
                 continue;
             }
             BigDecimal score = null;
             ImageMatchReason.Decoded reason = ImageMatchReason.decode(null);
-            if (binding.getCandidateId() != null) {
-                Optional<ShopProductMatchCandidate> candidate =
-                        shopProductMatchCandidateRepository.findById(binding.getCandidateId());
-                if (candidate.isPresent()) {
-                    ShopProductMatchCandidate c = candidate.get();
-                    score = c.getMatchScore();
-                    reason = decodeCandidateReason(c);
-                }
+            ShopProductMatchCandidate candidate = binding.getCandidateId() == null
+                    ? null : candidateById.get(binding.getCandidateId());
+            if (candidate != null) {
+                score = candidate.getMatchScore();
+                reason = decodeCandidateReason(candidate);
             }
             views.add(view(binding.getThirdPlatformItemId(),
                     binding.getThirdPlatformSkuId(), binding.getTangbuyProductId(), binding.getTangbuySkuId(),
@@ -218,7 +238,7 @@ public class ImageMatchConfirmService {
         return views;
     }
 
-    /** Skip bindings whose Shopify product mirror was soft-deleted (orphan rows). */
+    /** AUTO_ALIGN/MANUAL rows carry a {@link SkuMatchReason}, not the image-search codec. */
     private static ImageMatchReason.Decoded decodeCandidateReason(ShopProductMatchCandidate candidate) {
         if (candidate.getMatchSource() == MatchSource.IMAGE) {
             return ImageMatchReason.decode(candidate.getMatchReason());
@@ -233,19 +253,6 @@ public class ImageMatchConfirmService {
                 null,
                 sku.specLabel(),
                 sku.specLabel());
-    }
-
-    private boolean bindingTargetsActiveProduct(String shopName, ShopProductBinding binding) {
-        String itemId = binding.getThirdPlatformItemId();
-        if (StringUtils.isBlank(itemId)) {
-            itemId = thirdPlatformSkuRepository
-                    .findItemIdBySkuId(shopName, binding.getThirdPlatformSkuId())
-                    .orElse(null);
-        }
-        if (StringUtils.isBlank(itemId)) {
-            return false;
-        }
-        return thirdPlatformProductRepository.findActiveByShopAndItem(shopName, itemId).isPresent();
     }
 
     private void requireProductExists(String shopName, String itemId) {

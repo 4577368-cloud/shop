@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -93,7 +94,18 @@ public class SkuBindingOverviewService {
         for (ThirdPlatformProduct p : thirdPlatformProductRepository.listByShop(shopName)) {
             productByItemId.put(p.getThirdPlatformItemId(), p);
         }
+        // Everything below is keyed by product; load it shop-wide so the loop stays query-free.
+        Map<String, List<ThirdPlatformSku>> variantsByItemId = new HashMap<>();
+        for (ThirdPlatformSku sku : thirdPlatformSkuRepository.listByShop(shopName)) {
+            variantsByItemId.computeIfAbsent(sku.getThirdPlatformItemId(), k -> new ArrayList<>()).add(sku);
+        }
+        Map<String, Map<String, VariantSkuBinding>> v1ByItemId =
+                variantSkuBindingRepository.mapActiveByShop(shopName);
         Map<Long, ShopProductMatchCandidate> candidateCache = new HashMap<>();
+        for (ShopProductMatchCandidate candidate : shopProductMatchCandidateRepository.listByIds(
+                bindings.stream().map(ShopProductBinding::getCandidateId).filter(Objects::nonNull).toList())) {
+            candidateCache.put(candidate.getId(), candidate);
+        }
 
         List<SkuProductOverviewVO> result = new ArrayList<>();
         for (String itemId : itemIds) {
@@ -102,9 +114,8 @@ public class SkuBindingOverviewService {
                 // Orphan binding: product mirror was deleted in Shopify; skip until cleanup runs.
                 continue;
             }
-            List<ThirdPlatformSku> variants = thirdPlatformSkuRepository.listByItem(shopName, itemId);
-            Map<String, VariantSkuBinding> v1BySku =
-                    variantSkuBindingRepository.mapActiveByProduct(shopName, itemId);
+            List<ThirdPlatformSku> variants = variantsByItemId.getOrDefault(itemId, List.of());
+            Map<String, VariantSkuBinding> v1BySku = v1ByItemId.getOrDefault(itemId, Map.of());
             List<SkuVariantVO> variantVos = new ArrayList<>();
             for (ThirdPlatformSku sku : variants) {
                 variantVos.add(toVariantVO(sku, bindingBySkuId.get(sku.getThirdPlatformSkuId()),
