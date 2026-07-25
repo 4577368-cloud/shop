@@ -4,7 +4,12 @@ import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.config.ShopifyProperties;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
+import com.tang.plugin.domain.entity.user.UserOauthState;
+import com.tang.plugin.domain.entity.user.UserShop;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
+import com.tang.plugin.repository.UserOauthStateRepository;
+import com.tang.plugin.repository.UserShopRepository;
+import com.tang.plugin.service.auth.JwtService;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
 import com.tang.plugin.service.order.external.component.ShopifyAuthComponent;
 import com.tang.plugin.service.product.ProductSyncService;
@@ -15,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,10 +30,26 @@ import java.util.UUID;
 
 /**
  * Shopify OAuth install / callback orchestration. Fulfillment mount explicitly skipped.
+ *
+ * <p>P2 changes:
+ * <ul>
+ *   <li>{@code buildInstallUrl} now requires a {@code userId}; the generated state is persisted
+ *       (SHA-256 hashed) in {@code user_oauth_state} so the callback can both verify CSRF and
+ *       attribute the binding to the initiating user.</li>
+ *   <li>{@code handleCallback} validates the state, marks it consumed (one-time use), and writes
+ *       a {@code user_shop} binding row. If the shop is already bound to a different user, the
+ *       binding is refused with {@code SHOP_ALREADY_BOUND}.</li>
+ *   <li>{@code listActiveShops} is now scoped to a {@code userId} — returns only shops bound to
+ *       that user. The global unscoped overload is retained for backward compatibility during
+ *       transition (e.g. internal admin tooling) but should not be exposed to end users.</li>
+ * </ul>
  */
 @Slf4j
 @Service
 public class ShopifyAuthService {
+
+    /** OAuth state TTL — must be long enough for the Shopify consent screen but short enough to limit replay. */
+    private static final long OAUTH_STATE_TTL_SECONDS = 600L; // 10 minutes
 
     @Resource
     private ShopifyProperties shopifyProperties;
@@ -41,13 +63,25 @@ public class ShopifyAuthService {
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
     @Resource
     private ProductSyncService productSyncService;
+    @Resource
+    private UserShopRepository userShopRepository;
+    @Resource
+    private UserOauthStateRepository userOauthStateRepository;
+    @Resource
+    private JwtService jwtService;
 
     /**
      * Read-only auth status for a shop, used by the frontend to restore state after OAuth redirect.
      * Returns only non-sensitive fields (never the access token). Unknown/invalid shops report
      * {@code authorized=false} instead of failing.
+     *
+     * <p>P2.1 hardening: when {@code userId} is provided (caller is authenticated), the shop must
+     * also be bound to that user. A shop authorized under another account reports
+     * {@code authorized=false, status="NOT_BOUND"} so its existence is not leaked. Callers without
+     * a JWT (legacy/transition flows) still receive the legacy behavior — the endpoint remains
+     * in PROTECTED_EXACT_PATHS so in practice a JWT is always present.
      */
-    public Map<String, Object> getShopStatus(String shop) {
+    public Map<String, Object> getShopStatus(String shop, Long userId) {
         Map<String, Object> result = new LinkedHashMap<>();
         String shopDomain = ShopifyGraphqlClient.normalizeDomain(shop);
         if (StringUtils.isBlank(shopDomain) || !shopDomain.endsWith(".myshopify.com")) {
@@ -65,6 +99,19 @@ public class ShopifyAuthService {
             return result;
         }
         ShopifyStoreAuth a = auth.get();
+        // P2.1: enforce user binding. If the caller is authenticated but the shop is bound to a
+        // different user (or not bound at all), do not reveal that the shop is authorized.
+        if (userId != null) {
+            Optional<UserShop> binding = userShopRepository.findByShopName(a.getShopName());
+            if (binding.isEmpty() || !binding.get().getUserId().equals(userId)) {
+                log.warn("Shop status denied: shopDomain={} requested by userId={} but bound to {}",
+                        shopDomain, userId, binding.map(UserShop::getUserId).orElse(null));
+                result.put("authorized", false);
+                result.put("shopDomain", shopDomain);
+                result.put("status", "NOT_BOUND");
+                return result;
+            }
+        }
         result.put("authorized", true);
         result.put("shopName", a.getShopName());
         result.put("shopDomain", a.getShopDomain());
@@ -74,29 +121,60 @@ public class ShopifyAuthService {
         return result;
     }
 
+    /** Legacy overload — retains the old signature for any internal callers that don't have a userId. */
+    public Map<String, Object> getShopStatus(String shop) {
+        return getShopStatus(shop, null);
+    }
+
     /**
-     * Active authorized shops for the sidebar switcher (multi-shop). Never returns access tokens.
+     * Active authorized shops bound to the given user. Never returns access tokens.
+     * P2: scoped by user_shop binding.
      */
-    public List<Map<String, Object>> listActiveShops() {
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (ShopifyStoreAuth a : shopifyStoreAuthService.listActive()) {
+    public List<Map<String, Object>> listActiveShops(Long userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        List<UserShop> bindings = userShopRepository.listByUserId(userId);
+        List<Map<String, Object>> out = new ArrayList<>(bindings.size());
+        for (UserShop b : bindings) {
+            Optional<ShopifyStoreAuth> auth = shopifyStoreAuthService.findActiveByShopName(b.getShopName());
+            if (auth.isEmpty()) {
+                // Bound row exists but shopify_store_auth is gone (e.g. uninstalled). Skip silently.
+                continue;
+            }
+            ShopifyStoreAuth a = auth.get();
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("shopName", a.getShopName());
             row.put("shopDomain", a.getShopDomain());
             row.put("authorizedAt", a.getAuthorizedAt());
             row.put("productCount", thirdPlatformProductRepository.countByShop(a.getShopName()));
+            row.put("boundAt", b.getBoundAt());
             out.add(row);
         }
         return out;
     }
 
-    public String buildInstallUrl(String shop) {
+    /**
+     * Build the Shopify OAuth install URL. The state nonce is persisted (hashed) so the callback
+     * can verify CSRF and bind the resulting shop to the initiating user.
+     *
+     * @param userId the authenticated user initiating the install (must not be null)
+     * @param shop   the shop domain entered by the user (e.g. "my-shop" or "my-shop.myshopify.com")
+     * @return the absolute Shopify OAuth consent URL
+     */
+    public String buildInstallUrl(Long userId, String shop) {
+        if (userId == null) {
+            throw new CustomException("User must be authenticated to install a shop", 401, "UNAUTHENTICATED");
+        }
         assertConfigured();
         String shopDomain = normalizeAndValidateShop(shop);
-        String state = UUID.randomUUID().toString().replace("-", "");
-        String redirect = shopifyAuthComponent.buildInstallRedirectUrl(shopDomain, state);
-        log.info("Shopify install redirect prepared shopDomain={}", shopDomain);
-        return redirect;
+        String rawState = UUID.randomUUID().toString().replace("-", "");
+        String stateHash = jwtService.hashToken(rawState);
+        Instant expiresAt = Instant.now().plusSeconds(OAUTH_STATE_TTL_SECONDS);
+        userOauthStateRepository.insert(stateHash, userId, shopDomain, expiresAt);
+        log.info("Shopify install redirect prepared userId={} shopDomain={} stateExpiresAt={}",
+                userId, shopDomain, expiresAt);
+        return shopifyAuthComponent.buildInstallRedirectUrl(shopDomain, rawState);
     }
 
     public Map<String, Object> handleCallback(Map<String, String> queryParams) {
@@ -116,8 +194,30 @@ public class ShopifyAuthService {
 
         String shopDomain = normalizeAndValidateShop(queryParams.get("shop"));
         String code = queryParams.get("code");
+        String rawState = queryParams.get("state");
         if (StringUtils.isBlank(code)) {
             throw new CustomException("Shopify callback code blank, shopDomain=" + shopDomain);
+        }
+
+        // P2: validate state (CSRF + user binding). State is one-time use — mark consumed atomically.
+        UserOauthState oauthState = consumeState(rawState, shopDomain);
+        String shopName = toShopName(shopDomain);
+
+        // P2: refuse binding if the shop is already owned by another user.
+        // Check BEFORE token exchange so we don't overwrite the original owner's access_token
+        // (saveActiveAuth upserts by shop_domain, which would hijack credentials).
+        Optional<UserShop> existingBinding = userShopRepository.findByShopName(shopName);
+        if (existingBinding.isPresent() && !existingBinding.get().getUserId().equals(oauthState.getUserId())) {
+            log.warn("Shop {} already bound to user {} (attempted bind by user {})",
+                    shopName, existingBinding.get().getUserId(), oauthState.getUserId());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("status", "SHOP_ALREADY_BOUND");
+            result.put("shopDomain", shopDomain);
+            result.put("shopName", shopName);
+            result.put("authId", null);
+            result.put("fulfillmentMounted", false);
+            result.put("note", "Shop is already bound to another account. Contact support if you believe this is an error.");
+            return result;
         }
 
         JSONObject tokenJson;
@@ -132,7 +232,6 @@ public class ShopifyAuthService {
         }
         String accessToken = tokenJson.getString("access_token");
         String scope = tokenJson.getString("scope");
-        String shopName = toShopName(shopDomain);
 
         Long authId;
         try {
@@ -143,6 +242,10 @@ public class ShopifyAuthService {
                     + ", cause=" + e.getMessage(), e);
         }
         log.info("Shopify auth saved shopDomain={} shopName={} authId={}", shopDomain, shopName, authId);
+
+        UserShop binding = userShopRepository.upsertBinding(oauthState.getUserId(), shopName, shopDomain);
+        log.info("Shop bound userId={} shopName={} bindingId={}",
+                oauthState.getUserId(), shopName, binding.getId());
 
         // Fulfillment mount intentionally skipped in phase-2.
         try {
@@ -164,9 +267,39 @@ public class ShopifyAuthService {
         result.put("shopDomain", shopDomain);
         result.put("shopName", shopName);
         result.put("authId", authId);
+        result.put("boundToUserId", oauthState.getUserId());
         result.put("fulfillmentMounted", false);
         result.put("note", "Auth saved. Webhooks registered (orders/create, orders/updated, app/uninstalled).");
         return result;
+    }
+
+    /**
+     * Validate the OAuth state nonce: must exist, be unconsumed, unexpired, and match the shop
+     * domain returned by Shopify. Atomically marks it consumed to prevent replay.
+     * Returns the resolved state record (contains userId + shopDomain).
+     */
+    private UserOauthState consumeState(String rawState, String shopDomainFromCallback) {
+        if (StringUtils.isBlank(rawState)) {
+            throw new CustomException("Shopify callback state missing", 400, "OAUTH_STATE_MISSING");
+        }
+        String stateHash = jwtService.hashToken(rawState);
+        Optional<UserOauthState> opt = userOauthStateRepository.findActiveByStateHash(stateHash);
+        if (opt.isEmpty()) {
+            throw new CustomException("Shopify callback state invalid or expired", 400, "OAUTH_STATE_INVALID");
+        }
+        UserOauthState state = opt.get();
+        // Verify the shop domain returned by Shopify matches the one recorded at install time.
+        // This prevents a state issued for shop A from being used to authorize shop B.
+        if (!shopDomainFromCallback.equalsIgnoreCase(state.getShopDomain())) {
+            log.warn("OAuth state shop mismatch: state.shop={} callback.shop={}",
+                    state.getShopDomain(), shopDomainFromCallback);
+            throw new CustomException("Shopify callback state shop mismatch", 400, "OAUTH_STATE_SHOP_MISMATCH");
+        }
+        if (!userOauthStateRepository.markConsumed(state.getId())) {
+            // Concurrent callback already consumed this state — refuse the replay.
+            throw new CustomException("Shopify callback state already consumed", 400, "OAUTH_STATE_REPLAYED");
+        }
+        return state;
     }
 
     private void assertConfigured() {

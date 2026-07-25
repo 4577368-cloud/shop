@@ -67,3 +67,13 @@ services:
         value: https://tangbuy.cc
       - key: TANG_PLUGIN_TANGBUY_MALL_BASE_URL
         value: https://admin.tangbuy.cc
+      # P1 用户系统：JWT 签名密钥（必须在 Render Dashboard 手动设置，>=32 字符，永不提交）
+      - key: TANG_PLUGIN_JWT_SECRET
+        sync: false
+      # P2 跨站 Cookie：前端 ai.tangbuy.com 与后端 shop-x2mw.onrender.com 跨站，
+      # 必须 SameSite=None 才能让浏览器在跨站请求中携带 tb_access / tb_refresh cookie。
+      - key: TANG_PLUGIN_COOKIE_SAMESITE
+        value: "none"
+      # P2 CORS 白名单：允许前端域名 + 本地开发。逗号分隔。
+      - key: TANG_PLUGIN_CORS_ALLOWED_ORIGINS
+        value: "https://ai.tangbuy.com,http://localhost:3000"

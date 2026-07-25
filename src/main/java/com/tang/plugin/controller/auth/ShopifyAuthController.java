@@ -34,9 +34,11 @@ public class ShopifyAuthController {
     private ShopifyProperties shopifyProperties;
 
     @GetMapping("/install")
-    public ResponseEntity<Void> install(@RequestParam("shop") String shop) {
-        String redirectUrl = shopifyAuthService.buildInstallUrl(shop);
-        log.info("Shopify install redirect shop={}", shop);
+    public ResponseEntity<Void> install(@RequestParam("shop") String shop,
+                                          HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute("userId");
+        String redirectUrl = shopifyAuthService.buildInstallUrl(userId, shop);
+        log.info("Shopify install redirect shop={} userId={}", shop, userId);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
@@ -44,14 +46,23 @@ public class ShopifyAuthController {
     }
 
     @GetMapping("/status")
-    public Map<String, Object> status(@RequestParam("shop") String shop) {
-        return shopifyAuthService.getShopStatus(shop);
+    public Map<String, Object> status(@RequestParam("shop") String shop,
+                                        HttpServletRequest request) {
+        // P2.1: /status is now protected — userId is always injected by JwtAuthFilter.
+        // The user-scoped check prevents leaking whether a shop is authorized under
+        // another account.
+        Long userId = (Long) request.getAttribute("userId");
+        return shopifyAuthService.getShopStatus(shop, userId);
     }
 
-    /** Active authorized shops for the workbench shop switcher (non-sensitive fields only). */
+    /**
+     * Active authorized shops bound to the current user. P2: scoped by user_shop binding.
+     * JwtAuthFilter injects {@code userId} into the request attribute.
+     */
     @GetMapping("/shops")
-    public List<Map<String, Object>> shops() {
-        return shopifyAuthService.listActiveShops();
+    public List<Map<String, Object>> shops(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute("userId");
+        return shopifyAuthService.listActiveShops(userId);
     }
 
     @GetMapping("/callback")
@@ -70,11 +81,14 @@ public class ShopifyAuthController {
         // On success redirect back to the frontend authorize page so the SPA can restore state
         // (localStorage + /status). Failures still surface as JSON via the thrown exception above.
         String shopDomain = String.valueOf(result.get("shopDomain"));
+        String status = String.valueOf(result.getOrDefault("status", "OK"));
         String base = StringUtils.removeEnd(
                 StringUtils.trimToEmpty(shopifyProperties.getFrontendBaseUrl()), "/");
+        // Forward status so the frontend can show the "already bound" notice without an extra API call.
         String redirectUrl = base + "/authorize?shop="
-                + URLEncoder.encode(shopDomain, StandardCharsets.UTF_8);
-        log.info("Shopify auth callback success, redirecting to frontend shopDomain={}", shopDomain);
+                + URLEncoder.encode(shopDomain, StandardCharsets.UTF_8)
+                + "&status=" + URLEncoder.encode(status, StandardCharsets.UTF_8);
+        log.info("Shopify auth callback result status={} shopDomain={}", status, shopDomain);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")

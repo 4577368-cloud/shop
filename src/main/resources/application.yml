@@ -72,3 +72,14 @@ tang:
     tangbuy-admin:
       base-url: ${TANG_PLUGIN_TANGBUY_ADMIN_BASE_URL:https://admin.tangbuy.cc/prod-api}
       token: ${TANG_PLUGIN_TANGBUY_ADMIN_TOKEN:}
+    # User auth (P1): JWT signing + cookie config
+    auth:
+      jwt:
+        secret: ${TANG_PLUGIN_JWT_SECRET:dev-secret-change-in-production-min-32-chars-xxxxxxxxxx}
+        access-ttl-seconds: ${TANG_PLUGIN_JWT_ACCESS_TTL:604800}
+        refresh-ttl-seconds: ${TANG_PLUGIN_JWT_REFRESH_TTL:2592000}
+      cookie:
+        # Same-site policy: Lax works for localhost (same-site across ports). Use "none" + HTTPS in prod cross-origin.
+        same-site: ${TANG_PLUGIN_COOKIE_SAMESITE:Lax}
+        secure: ${TANG_PLUGIN_COOKIE_SECURE:false}
+        domain: ${TANG_PLUGIN_COOKIE_DOMAIN:}
