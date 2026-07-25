@@ -71,6 +71,7 @@ public class OrderLinePersistenceService {
                     .setPrice(line.getPrice())
                     .setTangbuyProductId(line.getTangbuyProductId())
                     .setTangbuySkuId(line.getTangbuySkuId())
+                    .setPreviewImageUrl(line.getImageUrl())
                     .setBindingStatus(status)
                     .setDraftOrderId(draftOrderId)
                     .setDelFlag(0);

@@ -42,7 +42,7 @@ public class PublishController {
         return catalogPublishService.publish(request);
     }
 
-    /** "已刊登" count: products successfully published (listed) from the Tangbuy catalog for a shop. */
+    /** "已刊登" count: catalog publishes still on Shopify (excludes products deleted from the store). */
     @GetMapping("/published-count")
     public Map<String, Integer> publishedCount(@RequestParam("shopName") String shopName) {
         return Map.of("count", productPublishRecordService.countPublished(shopName));

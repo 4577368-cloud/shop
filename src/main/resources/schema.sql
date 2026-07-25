@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS third_platform_order_line (
     price                    DECIMAL(18, 4),
     tangbuy_product_id       VARCHAR(128),
     tangbuy_sku_id           VARCHAR(128),
+    preview_image_url        VARCHAR(2048),
     binding_status           VARCHAR(32)   NOT NULL,
     handling_status          VARCHAR(32),
     handling_note            VARCHAR(512),

@@ -14,4 +14,6 @@ public class SkuAlignManualBindDTO {
     private String offerSkuId;
     private SourceRole sourceRole;
     private String reason;
+    /** Tangbuy product URL for itemGet validation (same source as browser SKU picker). */
+    private String detailUrl;
 }

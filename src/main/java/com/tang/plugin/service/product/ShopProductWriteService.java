@@ -7,6 +7,7 @@ import com.tang.plugin.domain.bo.shopify.ShopifyEnabledShop;
 import com.tang.plugin.domain.dto.product.ShopProductDetailVO;
 import com.tang.plugin.domain.dto.product.ShopProductUpdateRequest;
 import com.tang.plugin.domain.dto.product.ShopProductVariantUpdate;
+import com.tang.plugin.domain.entity.product.ThirdPlatformProductMedia;
 import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.publish.component.ExchangeRateComponent;
@@ -87,17 +88,31 @@ public class ShopProductWriteService {
                 .filter(StringUtils::isNotBlank)
                 .collect(Collectors.toSet());
 
+        List<String> deletedVariantIds = normalizeIdList(req.getDeletedVariantIds());
+        List<String> deletedMediaIds = normalizeIdList(req.getDeletedMediaIds());
+        assertDeletionsAllowed(shopName, itemId, current, mirroredVariantIds, deletedVariantIds, deletedMediaIds);
+
+        if (!deletedMediaIds.isEmpty()) {
+            shopifyProductUpdateComponent.deleteMedia(
+                    shopName, shop.getShopDomain(), shop.getAccessToken(), itemId, deletedMediaIds);
+        }
+        if (!deletedVariantIds.isEmpty()) {
+            shopifyProductUpdateComponent.deleteVariants(
+                    shopName, shop.getShopDomain(), shop.getAccessToken(), itemId, deletedVariantIds);
+        }
+
         shopifyProductUpdateComponent.updateProductFields(
                 shopName, shop.getShopDomain(), shop.getAccessToken(),
                 itemId, title, req.getDescription(), status);
 
-        Map<String, BigDecimal> prices = collectPriceUpdates(req, itemId, shopName, mirroredVariantIds);
+        Map<String, BigDecimal> prices = collectPriceUpdates(
+                req, itemId, shopName, mirroredVariantIds, deletedVariantIds);
         if (!prices.isEmpty()) {
             shopifyProductUpdateComponent.updateVariantPrices(
                     shopName, shop.getShopDomain(), shop.getAccessToken(), itemId, prices);
         }
 
-        Map<String, Integer> inventories = collectInventoryUpdates(req, mirroredVariantIds);
+        Map<String, Integer> inventories = collectInventoryUpdates(req, mirroredVariantIds, deletedVariantIds);
         if (!inventories.isEmpty()) {
             shopifyProductUpdateComponent.setVariantInventories(
                     shopName, shop.getShopDomain(), shop.getAccessToken(), itemId, inventories);
@@ -107,8 +122,47 @@ public class ShopProductWriteService {
         return shopProductQueryService.getDetail(shopName, itemId);
     }
 
+    private List<String> normalizeIdList(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        return raw.stream()
+                .map(StringUtils::trimToNull)
+                .filter(StringUtils::isNotBlank)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private void assertDeletionsAllowed(String shopName, String itemId, ShopProductDetailVO current,
+                                        Set<String> mirroredVariantIds,
+                                        List<String> deletedVariantIds, List<String> deletedMediaIds) {
+        for (String variantId : deletedVariantIds) {
+            if (!mirroredVariantIds.contains(variantId)) {
+                throw new CustomException(
+                        "variant not in mirror for delete, shopName=" + shopName + ", variantId=" + variantId);
+            }
+        }
+        if (mirroredVariantIds.size() - deletedVariantIds.size() < 1) {
+            throw new CustomException("cannot delete all variants; at least one must remain, itemId=" + itemId);
+        }
+        if (deletedMediaIds.isEmpty()) {
+            return;
+        }
+        Set<String> mirroredMediaIds = (current.getMedia() == null ? List.<ThirdPlatformProductMedia>of() : current.getMedia()).stream()
+                .map(m -> StringUtils.trimToNull(m.getMediaId()))
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toSet());
+        for (String mediaId : deletedMediaIds) {
+            if (!mirroredMediaIds.contains(mediaId)) {
+                throw new CustomException(
+                        "media not in mirror for delete, shopName=" + shopName + ", mediaId=" + mediaId);
+            }
+        }
+    }
+
     private Map<String, BigDecimal> collectPriceUpdates(ShopProductUpdateRequest req, String itemId,
-                                                        String shopName, Set<String> mirroredVariantIds) {
+                                                        String shopName, Set<String> mirroredVariantIds,
+                                                        List<String> deletedVariantIds) {
         Map<String, BigDecimal> prices = new LinkedHashMap<>();
         List<ShopProductVariantUpdate> variants = req.getVariants();
         if (variants != null) {
@@ -124,6 +178,9 @@ public class ShopProductWriteService {
                     throw new CustomException(
                             "variant not in mirror, shopName=" + shopName + ", variantId=" + gid);
                 }
+                if (deletedVariantIds.contains(gid)) {
+                    continue;
+                }
                 if (v.getPrice().signum() < 0) {
                     throw new CustomException("variant price must be >= 0, variantId=" + gid);
                 }
@@ -138,13 +195,16 @@ public class ShopProductWriteService {
                 throw new CustomException(
                         "no variant mirrored for price update; sync products first, shopName=" + shopName);
             }
-            prices.putIfAbsent(variantGid, req.getDefaultVariantPrice());
+            if (!deletedVariantIds.contains(variantGid)) {
+                prices.putIfAbsent(variantGid, req.getDefaultVariantPrice());
+            }
         }
         return prices;
     }
 
     private Map<String, Integer> collectInventoryUpdates(ShopProductUpdateRequest req,
-                                                         Set<String> mirroredVariantIds) {
+                                                         Set<String> mirroredVariantIds,
+                                                         List<String> deletedVariantIds) {
         Map<String, Integer> inventories = new LinkedHashMap<>();
         List<ShopProductVariantUpdate> variants = req.getVariants();
         if (variants == null) {
@@ -160,6 +220,9 @@ public class ShopProductWriteService {
             }
             if (!mirroredVariantIds.contains(gid)) {
                 throw new CustomException("variant not in mirror for inventory, variantId=" + gid);
+            }
+            if (deletedVariantIds.contains(gid)) {
+                continue;
             }
             if (v.getInventoryQuantity() < 0) {
                 throw new CustomException("inventory quantity must be >= 0, variantId=" + gid);

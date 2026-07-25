@@ -39,8 +39,11 @@ public class SkuBindingController {
     private SkuManualBindService skuManualBindService;
 
     @GetMapping("/overview")
-    public List<SkuProductOverviewVO> overview(@RequestParam String shopName) {
-        return skuBindingOverviewService.overview(shopName);
+    public List<SkuProductOverviewVO> overview(
+            @RequestParam String shopName,
+            @RequestParam(required = false) Integer thumbWidth,
+            @RequestParam(required = false, defaultValue = "false") boolean compact) {
+        return skuBindingOverviewService.overview(shopName, thumbWidth, compact);
     }
 
     /**

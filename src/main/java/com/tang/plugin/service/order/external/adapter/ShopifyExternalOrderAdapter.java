@@ -135,6 +135,21 @@ public class ShopifyExternalOrderAdapter {
                 line.setVariantTitle(variant.getString("title"));
             }
 
+            // 抓取 Shopify 订单行的 SKU 图（lineItems.node.image.url），
+            // 行图缺失时回退到 variant.image.url。同步快照存入订单行，前端直接展示。
+            String imageUrl = null;
+            JSONObject imageNode = node.getJSONObject("image");
+            if (imageNode != null) {
+                imageUrl = imageNode.getString("url");
+            }
+            if (StringUtils.isBlank(imageUrl) && variant != null) {
+                JSONObject variantImage = variant.getJSONObject("image");
+                if (variantImage != null) {
+                    imageUrl = variantImage.getString("url");
+                }
+            }
+            line.setImageUrl(imageUrl);
+
             JSONObject unitPriceSet = node.getJSONObject("originalUnitPriceSet");
             if (unitPriceSet != null) {
                 JSONObject shopMoney = unitPriceSet.getJSONObject("shopMoney");

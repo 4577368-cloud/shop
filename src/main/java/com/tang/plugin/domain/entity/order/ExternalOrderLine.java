@@ -17,6 +17,9 @@ public class ExternalOrderLine {
     private BigDecimal price;
     private String outerVariantId;
 
+    // Shopify 订单行 SKU 图（lineItems.node.image.url，回退 variant.image.url）。仅同步快照用。
+    private String imageUrl;
+
     // --- Binding consumption (P1): populated by OrderBindingResolver, not persisted ---
     private String tangbuyProductId;
     private String tangbuySkuId;

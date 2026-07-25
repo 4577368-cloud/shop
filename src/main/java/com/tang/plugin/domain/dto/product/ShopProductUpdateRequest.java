@@ -37,4 +37,12 @@ public class ShopProductUpdateRequest {
      * When true, skip the {@link #expectedUpdatedAt} check and overwrite Shopify.
      */
     private Boolean force;
+    /**
+     * Shopify variant GIDs ({@code thirdPlatformSkuId}) to delete. At least one variant must remain.
+     */
+    private List<String> deletedVariantIds;
+    /**
+     * Shopify product media GIDs to remove from the product gallery (not description HTML images).
+     */
+    private List<String> deletedMediaIds;
 }

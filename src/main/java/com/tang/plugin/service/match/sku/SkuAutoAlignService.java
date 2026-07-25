@@ -21,6 +21,7 @@ import com.tang.plugin.service.skualign.ProductPrimaryOfferResolver;
 import com.tang.plugin.service.skualign.SkuAlignProtectionRules;
 import com.tang.plugin.enums.skualign.VariantReviewState;
 import com.tang.plugin.service.match.sku.SkuMatcher.VariantAlignment;
+import com.tang.plugin.service.catalog.PreferredPoolIngestService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -72,6 +73,8 @@ public class SkuAutoAlignService {
     private VariantSkuBindingRepository v1BindingRepository;
     @Resource
     private VariantAlignmentReviewRepository reviewRepository;
+    @Resource
+    private PreferredPoolIngestService preferredPoolIngestService;
 
     /**
      * Auto-align the variants of {@code thirdPlatformItemId}. When {@code offerId} is blank it is resolved
@@ -120,6 +123,8 @@ public class SkuAutoAlignService {
             log.info("SkuAutoAlign shopName={} itemId={} offerId={} variants={} matched={}",
                     shopName, thirdPlatformItemId, resolvedOffer, alignments.size(), matched[0]);
         });
+
+        preferredPoolIngestService.scheduleIngestAfterBind(resolvedOffer);
 
         return new SkuAutoAlignResultVO()
                 .setThirdPlatformItemId(thirdPlatformItemId)
@@ -230,6 +235,10 @@ public class SkuAutoAlignService {
         }
         int rows = shopProductBindingRepository.activateBySkuId(shopName, thirdPlatformSkuId);
         log.info("SkuBinding ACK shopName={} thirdPlatformSkuId={} rows={}", shopName, thirdPlatformSkuId, rows);
+        if (rows > 0) {
+            shopProductBindingRepository.findActiveBySkuId(shopName, thirdPlatformSkuId)
+                    .ifPresent(b -> preferredPoolIngestService.scheduleIngestAfterBind(b.getTangbuyProductId()));
+        }
     }
 
     /** "取消关联": soft-unbind a single variant's binding (PENDING or ACTIVE). Idempotent. */

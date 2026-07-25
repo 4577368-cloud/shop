@@ -561,9 +561,14 @@ public class SkuAlignEngineService {
                 dto.getOfferId(), dto.getOfferSkuId())) {
             throw new CustomException("manual bind requires product, variant, offerId and offerSkuId");
         }
-        offerSkuMatrixValidator.assertSkuInOffer(dto.getOfferId(), dto.getOfferSkuId());
-        String spec = offerSkuMatrixValidator.resolveSkuSpecLabel(dto.getOfferId(), dto.getOfferSkuId());
-        String detailUrl = "https://detail.1688.com/offer/" + dto.getOfferId().trim() + ".html";
+        String detailUrl = StringUtils.trimToNull(dto.getDetailUrl());
+        if (detailUrl == null) {
+            detailUrl = "https://detail.1688.com/offer/" + dto.getOfferId().trim() + ".html";
+        }
+        offerSkuMatrixValidator.assertSkuInOffer(dto.getOfferId(), dto.getOfferSkuId(), detailUrl);
+        String spec = StringUtils.defaultIfBlank(
+                dto.getReason(),
+                offerSkuMatrixValidator.resolveSkuSpecLabel(dto.getOfferId(), dto.getOfferSkuId(), detailUrl));
         SourceRole role = dto.getSourceRole() != null ? dto.getSourceRole() : SourceRole.PRIMARY;
 
         txManger.run(() -> {

@@ -36,6 +36,7 @@ public class TangbuyMallClient {
 
     private static final String PAGE_INFO_PATH = "/prod-api/product-mall/admin/es/product/pageInfo";
     private static final String GATEWAY_SEARCH_PATH = "/gateway/plugin/item/allSubScriptionSearch";
+    private static final String ITEM_GET_PATH = "/gateway/product/v3/itemGet";
     private static final String ESTIMATE_SKU_PATH = "/gateway/plugin/logistic/estimateSkuSaleFeePrice";
 
     @Resource
@@ -204,6 +205,52 @@ public class TangbuyMallClient {
         return new PageInfoResult()
                 .setTotal(total)
                 .setRows(Collections.unmodifiableList(list));
+    }
+
+    /**
+     * GET itemGet — same source as the browser SKU picker ({@code /sku-align} manual bind).
+     * Returns {@code data.item.productSkus} when present.
+     */
+    public JSONArray itemGetProductSkus(String productUrl) {
+        if (!isConfigured()) {
+            throw new CustomException("Tangbuy mall token not configured (TANG_PLUGIN_TANGBUY_MALL_TOKEN)");
+        }
+        String url = StringUtils.trimToEmpty(productUrl);
+        if (StringUtils.isBlank(url)) {
+            throw new CustomException("itemGet requires productUrl");
+        }
+        String endpoint = StringUtils.removeEnd(StringUtils.trimToEmpty(properties.getGatewayBaseUrl()), "/")
+                + ITEM_GET_PATH
+                + "?url="
+                + java.net.URLEncoder.encode(url, java.nio.charset.StandardCharsets.UTF_8);
+        String raw;
+        try {
+            raw = client().get()
+                    .uri(endpoint)
+                    .header("Authorization", "Bearer " + properties.resolvedToken())
+                    .header("currency", "USD")
+                    .header("device", "pc")
+                    .header("lang", "cn")
+                    .header("tang-request-device", "web")
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(String.class);
+        } catch (RestClientException e) {
+            log.error("Tangbuy itemGet HTTP failed url={}", endpoint, e);
+            throw new CustomException("Tangbuy itemGet HTTP failed: " + e.getMessage(), e);
+        }
+        JSONObject root = JSON.parseObject(raw);
+        if (root == null) {
+            throw new CustomException("Tangbuy itemGet empty response");
+        }
+        Integer code = root.getInteger("code");
+        if (code != null && code != 200) {
+            throw new CustomException("Tangbuy itemGet code=" + code + " msg=" + root.getString("msg"));
+        }
+        JSONObject data = root.getJSONObject("data");
+        JSONObject item = data == null ? null : data.getJSONObject("item");
+        JSONArray skus = item == null ? null : item.getJSONArray("productSkus");
+        return skus == null ? new JSONArray() : skus;
     }
 
     /** Tangbuy logistic SKU fee estimate — uses {@link TangbuyMallProperties#resolvedToken()}. */

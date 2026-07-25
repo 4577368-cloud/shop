@@ -17,6 +17,7 @@ import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.match.sku.OfferSkuMatrixValidator;
+import com.tang.plugin.service.catalog.PreferredPoolIngestService;
 import com.tang.plugin.service.skualign.SkuAlignV1Service;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -65,6 +66,8 @@ public class ImageMatchConfirmService {
     private OfferSkuMatrixValidator offerSkuMatrixValidator;
     @Resource
     private SkuAlignV1Service skuAlignV1Service;
+    @Resource
+    private PreferredPoolIngestService preferredPoolIngestService;
 
     /**
      * Confirm the chosen offer as the ACTIVE binding of the product's default variant.
@@ -137,6 +140,10 @@ public class ImageMatchConfirmService {
 
         skuAlignV1Service.onProductBindConfirmed(shopName, itemId, "IMAGE");
 
+        if (targetStatus == BindingStatus.ACTIVE) {
+            preferredPoolIngestService.scheduleIngestAfterBind(tangbuyProductId);
+        }
+
         return view(itemId, variantGid, tangbuyProductId, tangbuySkuId, matchScore,
                 ImageMatchReason.decode(matchReason), targetStatus, BIND_SOURCE_FROM_CANDIDATE);
     }
@@ -156,6 +163,10 @@ public class ImageMatchConfirmService {
         int rows = shopProductBindingRepository.activateBySkuId(shopName, variantGid);
         log.info("ImageMatch ACK shopName={} itemId={} variantGid={} rows={}",
                 shopName, thirdPlatformItemId, variantGid, rows);
+        if (rows > 0) {
+            shopProductBindingRepository.findActiveBySkuId(shopName, variantGid)
+                    .ifPresent(b -> preferredPoolIngestService.scheduleIngestAfterBind(b.getTangbuyProductId()));
+        }
     }
 
     /**
@@ -183,7 +194,6 @@ public class ImageMatchConfirmService {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("listActiveBindings requires shopName");
         }
-        shopProductBindingRepository.deactivateOrphansForShop(shopName);
         List<ImageBindingView> views = new ArrayList<>();
         for (ShopProductBinding binding : shopProductBindingRepository.listBindableByShop(shopName)) {
             if (!bindingTargetsActiveProduct(shopName, binding)) {

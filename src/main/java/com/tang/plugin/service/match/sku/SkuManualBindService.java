@@ -11,6 +11,7 @@ import com.tang.plugin.enums.match.MatchSource;
 import com.tang.plugin.enums.match.MatchStatus;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
+import com.tang.plugin.service.catalog.PreferredPoolIngestService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -39,6 +40,8 @@ public class SkuManualBindService {
     private TxManger txManger;
     @Resource
     private OfferSkuMatrixValidator offerSkuMatrixValidator;
+    @Resource
+    private PreferredPoolIngestService preferredPoolIngestService;
 
     public void bind(SkuBindDTO dto) {
         if (dto == null || StringUtils.isBlank(dto.getShopName())) {
@@ -60,7 +63,8 @@ public class SkuManualBindService {
             detailUrl = "https://detail.1688.com/offer/" + dto.getTangbuyProductId() + ".html";
         }
 
-        offerSkuMatrixValidator.assertSkuInOffer(dto.getTangbuyProductId(), dto.getTangbuySkuId());
+        offerSkuMatrixValidator.assertSkuInOffer(
+                dto.getTangbuyProductId(), dto.getTangbuySkuId(), detailUrl);
 
         String reason = SkuMatchReason.encode(ALGO_MANUAL, 1.0d, dto.getTangbuySkuId(), spec, detailUrl);
         ShopProductMatchCandidate candidate = new ShopProductMatchCandidate()
@@ -93,5 +97,6 @@ public class SkuManualBindService {
             log.info("SkuManualBind shopName={} thirdPlatformSkuId={} tangbuySkuId={} candidateId={}",
                     dto.getShopName(), dto.getThirdPlatformSkuId(), dto.getTangbuySkuId(), candidateId);
         });
+        preferredPoolIngestService.scheduleIngestAfterBind(dto.getTangbuyProductId());
     }
 }

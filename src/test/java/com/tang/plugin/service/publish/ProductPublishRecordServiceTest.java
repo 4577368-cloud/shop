@@ -43,6 +43,7 @@ class ProductPublishRecordServiceTest {
     @BeforeEach
     void clean() {
         jdbcTemplate.update("DELETE FROM product_publish_record WHERE shop_name = ?", SHOP);
+        jdbcTemplate.update("DELETE FROM third_platform_product WHERE shop_name = ?", SHOP);
     }
 
     private ProductPublishRecord snapshot(String candidateId) {
@@ -175,6 +176,31 @@ class ProductPublishRecordServiceTest {
         ProductPublishRecord row = repository.findById(id).orElseThrow();
         assertEquals(ProductPublishStatus.PUBLISHED, row.getPublishStatus());
         assertNull(row.getErrorMessage());
+    }
+
+    @Test
+    void countPublishedOnlyIncludesActiveShopifyMirror() {
+        String productGid = "gid://shopify/Product/42";
+        Long id = service.getOrCreate(snapshot("cand-count")).getId();
+        service.markPublishing(id);
+        service.markPublished(id, productGid, "count-product", "gid://shopify/ProductVariant/2",
+                "gid://shopify/InventoryItem/3");
+
+        assertEquals(0, service.countPublished(SHOP));
+
+        jdbcTemplate.update(
+                """
+                INSERT INTO third_platform_product
+                (shop_name, shop_type, third_platform_item_id, title, del_flag)
+                VALUES (?, 'SHOPIFY', ?, 'Mirrored product', 0)
+                """,
+                SHOP, productGid);
+        assertEquals(1, service.countPublished(SHOP));
+
+        jdbcTemplate.update(
+                "UPDATE third_platform_product SET del_flag = 1 WHERE shop_name = ? AND third_platform_item_id = ?",
+                SHOP, productGid);
+        assertEquals(0, service.countPublished(SHOP));
     }
 
     @Test

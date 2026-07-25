@@ -4,17 +4,21 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.match.SkuProductOverviewVO;
 import com.tang.plugin.domain.dto.match.SkuVariantBindingVO;
 import com.tang.plugin.domain.dto.match.SkuVariantVO;
+import com.tang.plugin.domain.entity.skualign.VariantSkuBinding;
+import com.tang.plugin.enums.match.MatchSource;
+import com.tang.plugin.enums.skualign.VariantBindingState;
+import com.tang.plugin.repository.skualign.VariantSkuBindingRepository;
 import com.tang.plugin.domain.entity.match.ShopProductBinding;
 import com.tang.plugin.domain.entity.match.ShopProductMatchCandidate;
 import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
 import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
-import com.tang.plugin.enums.match.MatchSource;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.match.image.ImageMatchReason;
 import com.tang.plugin.service.match.sku.SkuMatchReason;
+import com.tang.plugin.utils.CdnThumbUrl;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -46,12 +50,21 @@ public class SkuBindingOverviewService {
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
     @Resource
     private ThirdPlatformSkuRepository thirdPlatformSkuRepository;
+    @Resource
+    private VariantSkuBindingRepository variantSkuBindingRepository;
 
     public List<SkuProductOverviewVO> overview(String shopName) {
+        return overview(shopName, null, false);
+    }
+
+    /**
+     * @param thumbWidth when set, downscales product/variant (and offer) image URLs for list views
+     * @param compact    omits heavy IMAGE snapshot fields from bindings to shrink JSON
+     */
+    public List<SkuProductOverviewVO> overview(String shopName, Integer thumbWidth, boolean compact) {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("overview requires shopName");
         }
-        shopProductBindingRepository.deactivateOrphansForShop(shopName);
         List<ShopProductBinding> bindings = shopProductBindingRepository.listBindableByShop(shopName);
         if (bindings.isEmpty()) {
             return List.of();
@@ -90,9 +103,12 @@ public class SkuBindingOverviewService {
                 continue;
             }
             List<ThirdPlatformSku> variants = thirdPlatformSkuRepository.listByItem(shopName, itemId);
+            Map<String, VariantSkuBinding> v1BySku =
+                    variantSkuBindingRepository.mapActiveByProduct(shopName, itemId);
             List<SkuVariantVO> variantVos = new ArrayList<>();
             for (ThirdPlatformSku sku : variants) {
-                variantVos.add(toVariantVO(sku, bindingBySkuId.get(sku.getThirdPlatformSkuId()), candidateCache));
+                variantVos.add(toVariantVO(sku, bindingBySkuId.get(sku.getThirdPlatformSkuId()),
+                        v1BySku.get(sku.getThirdPlatformSkuId()), candidateCache));
             }
             String tangbuyProductId = null;
             String detailUrl = null;
@@ -116,10 +132,42 @@ public class SkuBindingOverviewService {
                     .setDetailUrl(detailUrl)
                     .setVariants(variantVos));
         }
+        return applyListPresentation(result, thumbWidth, compact);
+    }
+
+    private static List<SkuProductOverviewVO> applyListPresentation(
+            List<SkuProductOverviewVO> result, Integer thumbWidth, boolean compact) {
+        int px = thumbWidth != null && thumbWidth > 0 ? thumbWidth : 0;
+        for (SkuProductOverviewVO p : result) {
+            if (px > 0 && StringUtils.isNotBlank(p.getImageUrl())) {
+                p.setImageUrl(CdnThumbUrl.apply(p.getImageUrl(), px));
+            }
+            if (p.getVariants() == null) {
+                continue;
+            }
+            for (SkuVariantVO v : p.getVariants()) {
+                if (px > 0 && StringUtils.isNotBlank(v.getImageUrl())) {
+                    v.setImageUrl(CdnThumbUrl.apply(v.getImageUrl(), px));
+                }
+                SkuVariantBindingVO bound = v.getBound();
+                if (bound == null) {
+                    continue;
+                }
+                if (px > 0 && StringUtils.isNotBlank(bound.getOfferImageUrl())) {
+                    bound.setOfferImageUrl(CdnThumbUrl.apply(bound.getOfferImageUrl(), px));
+                }
+                if (compact) {
+                    bound.setOfferPrice(null);
+                    bound.setQuerySource(null);
+                    bound.setAppliedQuery(null);
+                }
+            }
+        }
         return result;
     }
 
     private SkuVariantVO toVariantVO(ThirdPlatformSku sku, ShopProductBinding binding,
+                                     VariantSkuBinding v1Binding,
                                      Map<Long, ShopProductMatchCandidate> candidateCache) {
         SkuVariantVO vo = new SkuVariantVO()
                 .setThirdPlatformSkuId(sku.getThirdPlatformSkuId())
@@ -129,8 +177,36 @@ public class SkuBindingOverviewService {
                 .setImageUrl(sku.getImageUrl());
         if (binding != null) {
             vo.setBound(toBindingVO(binding, candidateCache));
+        } else {
+            SkuVariantBindingVO fromV1 = toBindingVoFromV1(v1Binding);
+            if (fromV1 != null) {
+                vo.setBound(fromV1);
+            }
         }
         return vo;
+    }
+
+    /** V1 active bindings (auto-align / supplement manual) not yet mirrored in legacy table. */
+    private static SkuVariantBindingVO toBindingVoFromV1(VariantSkuBinding v1) {
+        if (v1 == null || !v1.isActive()) {
+            return null;
+        }
+        if (v1.getBindingState() == VariantBindingState.BLOCKED) {
+            return null;
+        }
+        if (StringUtils.isBlank(v1.getOfferSkuId())) {
+            return null;
+        }
+        return new SkuVariantBindingVO()
+                .setTangbuyProductId(v1.getOfferId())
+                .setTangbuySkuId(v1.getOfferSkuId())
+                .setBindStatus(com.tang.plugin.enums.match.BindingStatus.ACTIVE.name())
+                .setMatchSource(v1.getMatchSource() != null ? v1.getMatchSource().name() : MatchSource.RULE.name());
+    }
+
+    private SkuVariantVO toVariantVO(ThirdPlatformSku sku, ShopProductBinding binding,
+                                     Map<Long, ShopProductMatchCandidate> candidateCache) {
+        return toVariantVO(sku, binding, null, candidateCache);
     }
 
     private SkuVariantBindingVO toBindingVO(ShopProductBinding binding,

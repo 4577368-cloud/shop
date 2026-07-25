@@ -112,14 +112,25 @@ public class ProductPublishRecordRepository {
         }
     }
 
-    /** Count PUBLISHED (successfully listed) records for a shop — the "已刊登" metric. Zero when blank/none. */
+    /** Count PUBLISHED records whose Shopify product still exists in the active product mirror (not deleted). */
     public int countPublishedByShop(String shopName) {
         if (StringUtils.isBlank(shopName)) {
             return 0;
         }
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM product_publish_record "
-                        + "WHERE shop_name = ? AND publish_status = ? AND del_flag = 0",
+                """
+                SELECT COUNT(*)
+                FROM product_publish_record ppr
+                INNER JOIN third_platform_product tpp
+                    ON tpp.shop_name = ppr.shop_name
+                    AND tpp.third_platform_item_id = ppr.shopify_product_id
+                    AND tpp.del_flag = 0
+                WHERE ppr.shop_name = ?
+                  AND ppr.publish_status = ?
+                  AND ppr.del_flag = 0
+                  AND ppr.shopify_product_id IS NOT NULL
+                  AND ppr.shopify_product_id <> ''
+                """,
                 Integer.class, shopName, ProductPublishStatus.PUBLISHED.name());
         return count == null ? 0 : count;
     }

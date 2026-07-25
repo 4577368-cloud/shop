@@ -9,8 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
 
 /**
  * Minimal Shopify Admin GraphQL transport. Only Order/Product Components may use this.
@@ -39,28 +39,65 @@ public class ShopifyGraphqlClient {
             body.put("variables", variables);
         }
 
-        try {
-            String raw = restClient.post()
-                    .uri(url)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .header("X-Shopify-Access-Token", accessToken)
-                    .body(body.toJSONString())
-                    .retrieve()
-                    .body(String.class);
+        String raw = restClient.post()
+                .uri(url)
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("X-Shopify-Access-Token", accessToken)
+                .body(body.toJSONString())
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, (request, response) -> {
+                    String errBody = readBody(response.getBody());
+                    HttpStatusCode status = response.getStatusCode();
+                    log.error("Shopify GraphQL HTTP {} shopName={} domain={} body={}",
+                            status, shopName, normalizedDomain, truncate(errBody, 800));
+                    throw new CustomException(buildHttpErrorMessage(status, shopName, errBody));
+                })
+                .body(String.class);
 
-            JSONObject response = JSON.parseObject(raw);
-            if (response == null) {
-                throw new CustomException("Shopify GraphQL empty response, shopName=" + shopName);
-            }
-            if (response.containsKey("errors")) {
-                log.error("Shopify GraphQL errors shopName={} errors={}", shopName, response.get("errors"));
-                throw new CustomException("Shopify GraphQL errors, shopName=" + shopName);
-            }
-            return response;
-        } catch (RestClientException e) {
-            log.error("Shopify GraphQL HTTP failed shopName={} domain={}", shopName, normalizedDomain, e);
-            throw new CustomException("Shopify GraphQL HTTP failed, shopName=" + shopName, e);
+        JSONObject response = JSON.parseObject(raw);
+        if (response == null) {
+            throw new CustomException("Shopify GraphQL empty response, shopName=" + shopName);
         }
+        if (response.containsKey("errors")) {
+            String detail = truncate(String.valueOf(response.get("errors")), 500);
+            log.error("Shopify GraphQL errors shopName={} errors={}", shopName, detail);
+            throw new CustomException(
+                    "Shopify GraphQL errors, shopName=" + shopName + ", errors=" + detail);
+        }
+        return response;
+    }
+
+    private static String buildHttpErrorMessage(HttpStatusCode status, String shopName, String body) {
+        int code = status.value();
+        String hint = switch (code) {
+            case 401 -> "re-authorize the store (access token invalid or revoked)";
+            case 403 -> "app may lack required Shopify scopes (e.g. write_products); re-install with updated permissions";
+            case 404 -> "check shop domain matches the authorized myshopify.com store";
+            default -> "check plugin logs for Shopify response body";
+        };
+        String snippet = truncate(StringUtils.trimToEmpty(body), 300);
+        if (StringUtils.isBlank(snippet)) {
+            return "Shopify GraphQL HTTP " + code + ", shopName=" + shopName + "; " + hint;
+        }
+        return "Shopify GraphQL HTTP " + code + ", shopName=" + shopName + "; " + hint + "; body=" + snippet;
+    }
+
+    private static String readBody(java.io.InputStream body) {
+        if (body == null) {
+            return "";
+        }
+        try {
+            return new String(body.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null || s.length() <= max) {
+            return s == null ? "" : s;
+        }
+        return s.substring(0, max) + "…";
     }
 
     public static String normalizeDomain(String shopDomain) {

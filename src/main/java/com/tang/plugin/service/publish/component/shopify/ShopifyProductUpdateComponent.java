@@ -83,6 +83,24 @@ public class ShopifyProductUpdateComponent {
             }
             """;
 
+    private static final String DELETE_VARIANTS = """
+            mutation DeleteVariants($productId: ID!, $variantsIds: [ID!]!) {
+              productVariantsBulkDelete(productId: $productId, variantsIds: $variantsIds) {
+                product { id }
+                userErrors { field message }
+              }
+            }
+            """;
+
+    private static final String DELETE_MEDIA = """
+            mutation DeleteMedia($productId: ID!, $mediaIds: [ID!]!) {
+              productDeleteMedia(productId: $productId, mediaIds: $mediaIds) {
+                deletedMediaIds
+                userErrors { field message }
+              }
+            }
+            """;
+
     @Resource
     private ShopifyGraphqlClient shopifyGraphqlClient;
 
@@ -168,6 +186,72 @@ public class ShopifyProductUpdateComponent {
         assertNoUserErrors(shopName, "productVariantsBulkUpdate", payload.getJSONArray("userErrors"));
         log.info("Shopify variant prices update ok shopName={} productId={} count={}",
                 shopName, productGid, variants.size());
+    }
+
+    /**
+     * Remove variants from a product. Shopify requires at least one variant to remain on the product.
+     */
+    public void deleteVariants(String shopName, String shopDomain, String accessToken,
+                               String productGid, List<String> variantGids) {
+        if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken, productGid)) {
+            throw new CustomException("Shopify delete variants missing credentials/ids, shopName=" + shopName);
+        }
+        if (CollectionUtils.isEmpty(variantGids)) {
+            return;
+        }
+        JSONArray ids = new JSONArray();
+        for (String gid : variantGids) {
+            if (StringUtils.isBlank(gid)) {
+                throw new CustomException("Shopify delete variant id blank, shopName=" + shopName);
+            }
+            ids.add(gid.trim());
+        }
+        JSONObject variables = new JSONObject();
+        variables.put("productId", productGid);
+        variables.put("variantsIds", ids);
+
+        JSONObject response = shopifyGraphqlClient.execute(
+                shopName, shopDomain, accessToken, DELETE_VARIANTS, variables);
+        JSONObject data = response.getJSONObject("data");
+        JSONObject payload = data == null ? null : data.getJSONObject("productVariantsBulkDelete");
+        if (payload == null) {
+            throw new CustomException("Shopify productVariantsBulkDelete payload null, shopName=" + shopName);
+        }
+        assertNoUserErrors(shopName, "productVariantsBulkDelete", payload.getJSONArray("userErrors"));
+        log.info("Shopify variants deleted ok shopName={} productId={} count={}",
+                shopName, productGid, ids.size());
+    }
+
+    /** Remove gallery media from a product (main / additional images). */
+    public void deleteMedia(String shopName, String shopDomain, String accessToken,
+                            String productGid, List<String> mediaGids) {
+        if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken, productGid)) {
+            throw new CustomException("Shopify delete media missing credentials/ids, shopName=" + shopName);
+        }
+        if (CollectionUtils.isEmpty(mediaGids)) {
+            return;
+        }
+        JSONArray ids = new JSONArray();
+        for (String gid : mediaGids) {
+            if (StringUtils.isBlank(gid)) {
+                throw new CustomException("Shopify delete media id blank, shopName=" + shopName);
+            }
+            ids.add(gid.trim());
+        }
+        JSONObject variables = new JSONObject();
+        variables.put("productId", productGid);
+        variables.put("mediaIds", ids);
+
+        JSONObject response = shopifyGraphqlClient.execute(
+                shopName, shopDomain, accessToken, DELETE_MEDIA, variables);
+        JSONObject data = response.getJSONObject("data");
+        JSONObject payload = data == null ? null : data.getJSONObject("productDeleteMedia");
+        if (payload == null) {
+            throw new CustomException("Shopify productDeleteMedia payload null, shopName=" + shopName);
+        }
+        assertNoUserErrors(shopName, "productDeleteMedia", payload.getJSONArray("userErrors"));
+        log.info("Shopify media deleted ok shopName={} productId={} count={}",
+                shopName, productGid, ids.size());
     }
 
     /**

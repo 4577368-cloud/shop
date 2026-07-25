@@ -27,6 +27,8 @@ public class ThirdPlatformOrderLine {
     private BigDecimal price;
     private String tangbuyProductId;
     private String tangbuySkuId;
+    /** Shopify 订单行 SKU 图快照（同步时从 lineItems.node.image.url 抓取）。前端订单表直接展示。 */
+    private String previewImageUrl;
     private OrderLineBindingStatus bindingStatus;
     /** Operator handling state for UNBOUND lines; null means PENDING. Never written by persist. */
     private OrderLineHandlingStatus handlingStatus;

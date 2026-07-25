@@ -57,6 +57,9 @@ public class ShopifyOrderComponent {
                   name
                   sku
                   quantity
+                  image {
+                    url
+                  }
                   originalUnitPriceSet {
                     shopMoney {
                       amount

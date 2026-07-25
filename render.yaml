@@ -52,9 +52,12 @@ services:
       - key: TANG_PLUGIN_SHOPIFY_API_SECRET
         sync: false
       - key: TANG_PLUGIN_SHOPIFY_REDIRECT_URI
-        sync: false
+        value: https://shop-x2mw.onrender.com/api/plugin/shopify/auth/callback
       - key: TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL
-        sync: false
+        value: https://shop-x2mw.onrender.com
+      # OAuth 完成后跳回独立站前端（与 Vercel 生产域名一致）
+      - key: TANG_PLUGIN_FRONTEND_BASE_URL
+        value: https://ai.tangbuy.com
       # Tangbuy portal JWT (dropshipping.tangbuy.cc login). Set in Render Dashboard — never commit.
       - key: TANG_PLUGIN_TANGBUY_MALL_TOKEN
         sync: false

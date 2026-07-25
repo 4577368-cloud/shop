@@ -60,7 +60,7 @@ public class ProductPublishRecordService {
         }
     }
 
-    /** Count successfully published (listed) products for a shop — the "已刊登" metric. */
+    /** Count catalog publishes still present on Shopify (active product mirror), not historical cumulative. */
     public int countPublished(String shopName) {
         return productPublishRecordRepository.countPublishedByShop(shopName);
     }
