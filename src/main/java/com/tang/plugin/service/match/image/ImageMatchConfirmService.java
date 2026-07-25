@@ -17,6 +17,7 @@ import com.tang.plugin.repository.ShopProductMatchCandidateRepository;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.match.sku.OfferSkuMatrixValidator;
+import com.tang.plugin.service.match.sku.SkuMatchReason;
 import com.tang.plugin.service.catalog.PreferredPoolIngestService;
 import com.tang.plugin.service.skualign.SkuAlignV1Service;
 import jakarta.annotation.Resource;
@@ -205,8 +206,9 @@ public class ImageMatchConfirmService {
                 Optional<ShopProductMatchCandidate> candidate =
                         shopProductMatchCandidateRepository.findById(binding.getCandidateId());
                 if (candidate.isPresent()) {
-                    score = candidate.get().getMatchScore();
-                    reason = ImageMatchReason.decode(candidate.get().getMatchReason());
+                    ShopProductMatchCandidate c = candidate.get();
+                    score = c.getMatchScore();
+                    reason = decodeCandidateReason(c);
                 }
             }
             views.add(view(binding.getThirdPlatformItemId(),
@@ -217,6 +219,22 @@ public class ImageMatchConfirmService {
     }
 
     /** Skip bindings whose Shopify product mirror was soft-deleted (orphan rows). */
+    private static ImageMatchReason.Decoded decodeCandidateReason(ShopProductMatchCandidate candidate) {
+        if (candidate.getMatchSource() == MatchSource.IMAGE) {
+            return ImageMatchReason.decode(candidate.getMatchReason());
+        }
+        SkuMatchReason.Decoded sku = SkuMatchReason.decode(candidate.getMatchReason());
+        return new ImageMatchReason.Decoded(
+                null,
+                null,
+                null,
+                sku.detailUrl(),
+                null,
+                null,
+                sku.specLabel(),
+                sku.specLabel());
+    }
+
     private boolean bindingTargetsActiveProduct(String shopName, ShopProductBinding binding) {
         String itemId = binding.getThirdPlatformItemId();
         if (StringUtils.isBlank(itemId)) {
