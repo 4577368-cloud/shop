@@ -135,9 +135,15 @@ public class Alibaba1688ImageUploadClient {
         return result.getString("imageId");
     }
 
+    private static final String USER_AGENT = "Mozilla/5.0 (compatible; TangbuyImageBot/1.0)";
+
     private byte[] fetchImageBytes(String imageUrl) {
         try {
-            byte[] bytes = restClient.get().uri(imageUrl).retrieve().body(byte[].class);
+            byte[] bytes = restClient.get()
+                    .uri(imageUrl)
+                    .header("User-Agent", USER_AGENT)
+                    .retrieve()
+                    .body(byte[].class);
             if (bytes == null || bytes.length == 0) {
                 throw new CustomException(ERR_IMAGE_UNREADABLE + ": 图片下载为空(" + imageUrl + ")");
             }

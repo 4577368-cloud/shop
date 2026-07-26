@@ -54,9 +54,10 @@ class ImageSearchServiceTest {
     private ImageSearchService service;
 
     private void mirror(String primaryImage, String title) {
-        when(thirdPlatformProductRepository.listByShop(SHOP)).thenReturn(List.of(new ThirdPlatformProduct()
-                .setShopName(SHOP).setShopType("SHOPIFY").setThirdPlatformItemId(ITEM)
-                .setTitle(title).setPrimaryImageUrl(primaryImage)));
+        when(thirdPlatformProductRepository.findActiveByShopAndItem(SHOP, ITEM))
+                .thenReturn(java.util.Optional.of(new ThirdPlatformProduct()
+                        .setShopName(SHOP).setShopType("SHOPIFY").setThirdPlatformItemId(ITEM)
+                        .setTitle(title).setPrimaryImageUrl(primaryImage)));
     }
 
     private static OfferImageSearchResultVO oneOffer() {

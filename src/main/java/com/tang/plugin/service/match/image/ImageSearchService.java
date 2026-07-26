@@ -47,8 +47,8 @@ public class ImageSearchService {
     public static final String ERR_NO_PRIMARY_IMAGE = "NO_PRIMARY_IMAGE";
     public static final String ERR_PRODUCT_NOT_FOUND = "PRODUCT_NOT_FOUND";
 
-    /** Multilingual translation language for the official {@code *Trans} fields. */
-    private static final String SEARCH_COUNTRY = "en";
+    /** Default multilingual translation language when the caller does not specify one. */
+    private static final String DEFAULT_COUNTRY = "en";
 
     @Resource
     private ThirdPlatformProductRepository thirdPlatformProductRepository;
@@ -69,7 +69,7 @@ public class ImageSearchService {
      * @param limit               candidates to fetch (null/&lt;=0 → client default)
      */
     public ImageSearchResultVO searchByShopProduct(String shopName, String thirdPlatformItemId, Integer limit) {
-        return searchByShopProduct(shopName, thirdPlatformItemId, limit, null);
+        return searchByShopProduct(shopName, thirdPlatformItemId, limit, null, null);
     }
 
     /**
@@ -77,19 +77,30 @@ public class ImageSearchService {
      */
     public ImageSearchResultVO searchByShopProduct(String shopName, String thirdPlatformItemId, Integer limit,
                                                    String searchImageUrlOverride) {
+        return searchByShopProduct(shopName, thirdPlatformItemId, limit, searchImageUrlOverride, null);
+    }
+
+    /**
+     * @param searchImageUrlOverride optional variant / representative image instead of product primary
+     * @param country                multilingual translation language for 1688 {@code *Trans} fields;
+     *                               defaults to {@value #DEFAULT_COUNTRY} when blank
+     */
+    public ImageSearchResultVO searchByShopProduct(String shopName, String thirdPlatformItemId, Integer limit,
+                                                   String searchImageUrlOverride, String country) {
         if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) {
             throw new CustomException("image search requires shopName and thirdPlatformItemId");
         }
+        String lang = StringUtils.defaultIfBlank(country, DEFAULT_COUNTRY);
         ThirdPlatformProduct product = findMirrorProduct(shopName, thirdPlatformItemId);
 
         if (StringUtils.isNotBlank(searchImageUrlOverride)) {
-            return searchUsingShopifyImagePath(product, searchImageUrlOverride.trim(), limit);
+            return searchUsingShopifyImagePath(product, searchImageUrlOverride.trim(), limit, lang);
         }
 
         // Tier 1: original source image (no query, no LLM). Catalog images are alicdn-hosted.
         String originalImage = searchImageResolver.resolveOriginalImageUrl(shopName, thirdPlatformItemId);
         if (StringUtils.isNotBlank(originalImage)) {
-            List<ImageSearchProductVO> items = search(resolveToken(originalImage), limit, null);
+            List<ImageSearchProductVO> items = search(resolveToken(originalImage), limit, null, lang);
             return result(items, ImageSource.ORIGINAL, QuerySource.NONE, null);
         }
 
@@ -98,18 +109,18 @@ public class ImageSearchService {
         if (StringUtils.isBlank(shopifyImage)) {
             throw new CustomException(ERR_NO_PRIMARY_IMAGE + ": 该商品无主图，无法进行 1688 图搜");
         }
-        return searchUsingShopifyImagePath(product, shopifyImage, limit);
+        return searchUsingShopifyImagePath(product, shopifyImage, limit, lang);
     }
 
     private ImageSearchResultVO searchUsingShopifyImagePath(ThirdPlatformProduct product, String shopifyImage,
-                                                            Integer limit) {
+                                                            Integer limit, String country) {
         SearchToken token = resolveToken(shopifyImage);
 
         // Tier 2: title query, when usable.
         QueryPlan titlePlan = searchImageResolver.titleQueryPlan(product.getTitle());
         List<ImageSearchProductVO> titleItems = null;
         if (titlePlan != null) {
-            titleItems = search(token, limit, titlePlan.retrievalValue());
+            titleItems = search(token, limit, titlePlan.retrievalValue(), country);
             if (!titleItems.isEmpty()) {
                 return result(titleItems, ImageSource.SHOPIFY, QuerySource.TITLE, titlePlan.displayValue());
             }
@@ -119,7 +130,7 @@ public class ImageSearchService {
         // Tier 3: LLM subject query (title unusable, or its recall was empty).
         String subject = llmVisionClient.describeSubject(shopifyImage);
         if (StringUtils.isNotBlank(subject)) {
-            List<ImageSearchProductVO> llmItems = search(token, limit, subject);
+            List<ImageSearchProductVO> llmItems = search(token, limit, subject, country);
             return result(llmItems, ImageSource.SHOPIFY, QuerySource.LLM, subject);
         }
 
@@ -127,7 +138,7 @@ public class ImageSearchService {
         if (titlePlan != null) {
             return result(titleItems, ImageSource.SHOPIFY, QuerySource.TITLE, titlePlan.displayValue());
         }
-        List<ImageSearchProductVO> pureItems = search(token, limit, null);
+        List<ImageSearchProductVO> pureItems = search(token, limit, null, country);
         return result(pureItems, ImageSource.SHOPIFY, QuerySource.NONE, null);
     }
 
@@ -143,16 +154,14 @@ public class ImageSearchService {
         return SearchToken.id(imageId);
     }
 
-    private List<ImageSearchProductVO> search(SearchToken token, Integer limit, String keyword) {
+    private List<ImageSearchProductVO> search(SearchToken token, Integer limit, String keyword, String country) {
         OfferImageSearchResultVO res = imageSearchClient.searchByImage(
-                token.imageAddress(), token.imageId(), keyword, null, SEARCH_COUNTRY, 1, limit);
+                token.imageAddress(), token.imageId(), keyword, null, country, 1, limit);
         return map(res.getItems());
     }
 
     private ThirdPlatformProduct findMirrorProduct(String shopName, String thirdPlatformItemId) {
-        return thirdPlatformProductRepository.listByShop(shopName).stream()
-                .filter(p -> thirdPlatformItemId.equals(p.getThirdPlatformItemId()))
-                .findFirst()
+        return thirdPlatformProductRepository.findActiveByShopAndItem(shopName, thirdPlatformItemId)
                 .orElseThrow(() -> new CustomException(ERR_PRODUCT_NOT_FOUND
                         + ": 未找到店铺商品(" + shopName + "/" + thirdPlatformItemId + ")，请先同步商品"));
     }

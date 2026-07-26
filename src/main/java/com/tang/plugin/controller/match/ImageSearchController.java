@@ -57,7 +57,8 @@ public class ImageSearchController {
                 request.getShopName(),
                 request.getThirdPlatformItemId(),
                 request.getLimit(),
-                request.getSearchImageUrl());
+                request.getSearchImageUrl(),
+                request.getCountry());
     }
 
     @PostMapping("/image-search/confirm")
