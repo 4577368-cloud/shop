@@ -781,7 +781,11 @@ ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR
 
 CREATE INDEX IF NOT EXISTS idx_credit_txn_user_created ON credit_transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_credit_txn_ref ON credit_transactions (ref_type, ref_id);
-CREATE UNIQUE INDEX IF NOT EXISTS uk_credit_txn_idempotent ON credit_transactions (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- Portable unique key (H2 + PostgreSQL). Do NOT use a partial index (WHERE …):
+-- H2 rejects that syntax and spring.sql.init.mode=always runs this on every boot.
+-- Both engines treat NULL as distinct in UNIQUE indexes, so many NULL keys are fine.
+DROP INDEX IF EXISTS uk_credit_txn_idempotent;
+CREATE UNIQUE INDEX IF NOT EXISTS uk_credit_txn_idempotent ON credit_transactions (user_id, idempotency_key);
 
 -- 积分批次（支持过期，FIFO 消耗）。
 -- 每次发放（订阅/积分包/促销）写一条批次记录，记录原始额度、已消耗、已过期。
