@@ -3,11 +3,20 @@ package com.tang.plugin.service.match;
 import com.tang.plugin.domain.dto.match.image.ImageSearchProductVO;
 import org.apache.commons.lang3.StringUtils;
 
-import java.util.Comparator;
 import java.util.List;
 
 /**
- * Rank image-search candidates: match score first, then monthly sold, then repurchase rate.
+ * Rank image-search candidates with <b>similarity always first</b>.
+ *
+ * <p>Official multilingual image search (A3-3b) does not return per-item similarity scores, so
+ * {@code similarityScore} is often null. In that case the gateway recall order <em>is</em> the
+ * similarity ranking — commercial signals (sold / repurchase) must not reorder past it.
+ *
+ * <ol>
+ *   <li>When any candidate has a usable similarity score: pick by similarity DESC, then sold,
+ *       repurchase, then original index.</li>
+ *   <li>When all similarity scores are missing: keep gateway order (index 0 wins).</li>
+ * </ol>
  */
 public final class MatchCandidateRanker {
 
@@ -18,24 +27,59 @@ public final class MatchCandidateRanker {
         if (items == null || items.isEmpty()) {
             return 0;
         }
+        if (!anyHasSimilarity(items)) {
+            // Trust 1688 relevance order; do not let sold/repurchase steal the top slot.
+            return 0;
+        }
         int bestIdx = 0;
-        double bestRank = Double.NEGATIVE_INFINITY;
-        for (int i = 0; i < items.size(); i++) {
-            double rank = rank(items.get(i));
-            if (rank > bestRank) {
-                bestRank = rank;
+        for (int i = 1; i < items.size(); i++) {
+            if (isBetter(items.get(i), i, items.get(bestIdx), bestIdx) > 0) {
                 bestIdx = i;
             }
         }
         return bestIdx;
     }
 
-    private static double rank(ImageSearchProductVO c) {
-        double match = normalizeMatchScore(c.getSimilarityScore()) / 100.0;
-        long sold = c.getSoldCount() == null ? 0L : c.getSoldCount();
-        double repurchase = parseRepurchase(c.getRepurchaseRate()) / 100.0;
-        // Match-first weighting mirrors frontend pickBestCandidateIndex.
-        return match * 0.5 + Math.min(sold / 100_000.0, 1.0) * 0.3 + repurchase * 0.2;
+    /**
+     * @return positive if {@code a} is better than {@code b}
+     */
+    static int isBetter(ImageSearchProductVO a, int indexA, ImageSearchProductVO b, int indexB) {
+        int scoreA = similarityOrZero(a);
+        int scoreB = similarityOrZero(b);
+        if (scoreA != scoreB) {
+            return scoreA - scoreB;
+        }
+        // Real similarity tied (both > 0): commercial signals may break the tie.
+        if (scoreA > 0) {
+            long soldDiff = sold(a) - sold(b);
+            if (soldDiff != 0) {
+                return soldDiff > 0 ? 1 : -1;
+            }
+            double repDiff = parseRepurchase(a.getRepurchaseRate()) - parseRepurchase(b.getRepurchaseRate());
+            if (repDiff != 0) {
+                return repDiff > 0 ? 1 : -1;
+            }
+        }
+        // Missing / zero similarity, or full commercial tie → preserve gateway order.
+        return indexB - indexA;
+    }
+
+    private static boolean anyHasSimilarity(List<ImageSearchProductVO> items) {
+        for (ImageSearchProductVO item : items) {
+            if (normalizeMatchScore(item == null ? null : item.getSimilarityScore()) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int similarityOrZero(ImageSearchProductVO c) {
+        Integer n = normalizeMatchScore(c == null ? null : c.getSimilarityScore());
+        return n == null ? 0 : n;
+    }
+
+    private static long sold(ImageSearchProductVO c) {
+        return c == null || c.getSoldCount() == null ? 0L : c.getSoldCount();
     }
 
     static Integer normalizeMatchScore(Double score) {
