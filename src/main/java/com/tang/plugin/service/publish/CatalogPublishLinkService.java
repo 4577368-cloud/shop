@@ -20,6 +20,7 @@ import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.service.catalog.TangbuyCatalogService;
 import com.tang.plugin.service.catalog.TangbuyMallClient;
 import com.tang.plugin.service.match.image.ImageMatchReason;
+import com.tang.plugin.domain.dto.match.sku.OfferSkuVO;
 import com.tang.plugin.service.match.sku.ItemGetSkuMatrixParser;
 import com.tang.plugin.service.match.sku.SkuMatcher;
 import com.tang.plugin.service.match.sku.SkuMatcher.VariantAlignment;
@@ -33,7 +34,9 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Establishes the 1:1 source binding for products published from the Tangbuy catalog (route B).
@@ -176,8 +179,86 @@ public class CatalogPublishLinkService {
                         shopName, record.getCandidateId(), e.getMessage());
             }
         }
+        repairPartialCatalogPublishProducts(shopName);
         log.info("Backfill publish-bindings done shopName={} result={}", shopName, result);
         return result;
+    }
+
+    /**
+     * Products with at least one FROM_PUBLISH binding but missing per-variant rows (e.g. multi-SKU publish
+     * before multi-link shipped). Uses itemGet + Shopify variant SKU (= Tangbuy skuId at publish time).
+     */
+    private void repairPartialCatalogPublishProducts(String shopName) {
+        Set<String> productIds = new LinkedHashSet<>();
+        for (ShopProductBinding b : shopProductBindingRepository.listBindableByShop(shopName)) {
+            if (!BIND_SOURCE_FROM_PUBLISH.equalsIgnoreCase(StringUtils.trimToEmpty(b.getBindSource()))) {
+                continue;
+            }
+            if (StringUtils.isNotBlank(b.getThirdPlatformItemId())) {
+                productIds.add(b.getThirdPlatformItemId().trim());
+            }
+        }
+        for (String productId : productIds) {
+            try {
+                ProductPublishRecord pseudo = new ProductPublishRecord()
+                        .setShopName(shopName)
+                        .setShopifyProductId(productId);
+                TangbuyCatalogProduct catalog = null;
+                String offerId = null;
+                String detailUrl = null;
+                for (ShopProductBinding b : shopProductBindingRepository.listBindableByShop(shopName)) {
+                    if (!productId.equals(b.getThirdPlatformItemId())) {
+                        continue;
+                    }
+                    if (!BIND_SOURCE_FROM_PUBLISH.equalsIgnoreCase(StringUtils.trimToEmpty(b.getBindSource()))) {
+                        continue;
+                    }
+                    if (offerId == null && StringUtils.isNotBlank(b.getTangbuyProductId())) {
+                        offerId = b.getTangbuyProductId().trim();
+                    }
+                    if (detailUrl == null && b.getCandidateId() != null) {
+                        detailUrl = resolveDetailUrlFromCandidate(b.getCandidateId());
+                    }
+                }
+                if (detailUrl == null) {
+                    detailUrl = resolveDetailUrlFromPublishRecord(shopName, productId);
+                }
+                repairPublishedVariantBindings(shopName, pseudo, catalog, null, null, detailUrl, offerId);
+            } catch (Exception e) {
+                log.warn("Partial catalog publish repair failed shop={} product={}: {}",
+                        shopName, productId, e.getMessage());
+            }
+        }
+    }
+
+    private String resolveDetailUrlFromCandidate(Long candidateId) {
+        if (candidateId == null) {
+            return null;
+        }
+        return shopProductMatchCandidateRepository.findById(candidateId)
+                .map(c -> {
+                    var decoded = com.tang.plugin.service.match.image.ImageMatchReason.decode(c.getMatchReason());
+                    return StringUtils.trimToNull(decoded.detailUrl());
+                })
+                .orElse(null);
+    }
+
+    private String resolveDetailUrlFromPublishRecord(String shopName, String shopifyProductId) {
+        for (ProductPublishRecord record : productPublishRecordRepository.listByShop(shopName)) {
+            if (record.getPublishStatus() != ProductPublishStatus.PUBLISHED) {
+                continue;
+            }
+            if (!shopifyProductId.equals(record.getShopifyProductId())) {
+                continue;
+            }
+            TangbuyCatalogProduct catalog =
+                    tangbuyCatalogService.findById(record.getCandidateId()).orElse(null);
+            if (catalog == null) {
+                continue;
+            }
+            return firstNonBlank(catalog.getTangbuyUrl(), catalog.getUrl1688());
+        }
+        return null;
     }
 
     private void finishCatalogPublishSeed(String shopName, String productGid) {
@@ -234,6 +315,7 @@ public class CatalogPublishLinkService {
             finishCatalogPublishSeed(shopName, productId);
             return;
         }
+        linkVariantsByShopifySkuField(shopName, productId, variants, matrix, offerId, image, price, detailUrl);
         List<VariantAlignment> alignments = SkuMatcher.align(variants, matrix);
         for (VariantAlignment a : alignments) {
             if (!a.matched() || StringUtils.isBlank(a.skuId())) {
@@ -247,6 +329,55 @@ public class CatalogPublishLinkService {
         finishCatalogPublishSeed(shopName, productId);
         log.info("Publish variant repair shop={} product={} variants={} boundBefore={}",
                 shopName, productId, variants.size(), boundCount);
+    }
+
+    /**
+     * Catalog publish writes Tangbuy skuId into Shopify variant.sku — pair directly before token matching.
+     */
+    private void linkVariantsByShopifySkuField(String shopName,
+                                               String productId,
+                                               List<ThirdPlatformSku> variants,
+                                               List<OfferSkuVO> matrix,
+                                               String offerId,
+                                               String image,
+                                               BigDecimal price,
+                                               String detailUrl) {
+        Set<String> matrixSkuIds = new LinkedHashSet<>();
+        for (OfferSkuVO row : matrix) {
+            if (row != null && StringUtils.isNotBlank(row.getSkuId())) {
+                matrixSkuIds.add(row.getSkuId().trim());
+            }
+        }
+        if (matrixSkuIds.isEmpty()) {
+            return;
+        }
+        for (ThirdPlatformSku variant : variants) {
+            if (shopProductBindingRepository
+                    .findBindableBySkuId(shopName, variant.getThirdPlatformSkuId())
+                    .isPresent()) {
+                continue;
+            }
+            String shopSku = StringUtils.trimToNull(variant.getSku());
+            if (shopSku == null) {
+                continue;
+            }
+            for (String tangbuySkuId : matrixSkuIds) {
+                if (skuIdEquals(shopSku, tangbuySkuId)) {
+                    link(shopName, productId, variant.getThirdPlatformSkuId(),
+                            offerId, tangbuySkuId, image, price, detailUrl);
+                    break;
+                }
+            }
+        }
+    }
+
+    private static boolean skuIdEquals(String a, String b) {
+        if (StringUtils.isAnyBlank(a, b)) {
+            return false;
+        }
+        String left = a.trim();
+        String right = b.trim();
+        return left.equals(right) || left.equalsIgnoreCase(right);
     }
 
     private LinkOutcome link(String shopName, String productGid, String variantGid, String tangbuyProductId,
