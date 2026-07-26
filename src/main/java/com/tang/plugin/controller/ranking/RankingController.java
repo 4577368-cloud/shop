@@ -54,19 +54,21 @@ public class RankingController {
             throw new com.tang.common.core.exception.CustomException(
                     "Import size exceeds limit of " + MAX_IMPORT_SIZE, 400, "IMPORT_TOO_LARGE");
         }
+        String country = request.getCountry() == null ? "" : request.getCountry();
         Long snapshotId = rankRepository.upsertSnapshot(
-                shopName, request.getDateRange(), request.getStartDate(), request.getEndDate(), size);
+                shopName, country, request.getDateRange(), request.getStartDate(), request.getEndDate(), size);
         List<RankProduct> products = (request.getProducts() == null ? List.<RankProduct>of()
                 : request.getProducts().stream()
-                .map(dto -> toEntity(snapshotId, shopName, dto))
+                .map(dto -> toEntity(snapshotId, shopName, country, dto))
                 .collect(Collectors.toList()));
-        rankRepository.replaceProducts(snapshotId, shopName, products);
-        log.info("Rank import done: shop={} dateRange={} snapshotId={} products={}",
-                shopName, request.getDateRange(), snapshotId, products.size());
+        rankRepository.replaceProducts(snapshotId, shopName, country, products);
+        log.info("Rank import done: shop={} country={} dateRange={} snapshotId={} products={}",
+                shopName, country, request.getDateRange(), snapshotId, products.size());
         return Map.of(
                 "snapshotId", snapshotId,
                 "imported", products.size(),
-                "dateRange", request.getDateRange() == null ? "" : request.getDateRange());
+                "dateRange", request.getDateRange() == null ? "" : request.getDateRange(),
+                "country", country);
     }
 
     @GetMapping("/snapshots")
@@ -92,10 +94,11 @@ public class RankingController {
         return rankRepository.listProducts(shopName, snapshotId, categoryL1);
     }
 
-    private RankProduct toEntity(Long snapshotId, String shopName, RankProductRowDTO dto) {
+    private RankProduct toEntity(Long snapshotId, String shopName, String country, RankProductRowDTO dto) {
         return new RankProduct()
                 .setSnapshotId(snapshotId)
                 .setShopName(shopName)
+                .setCountry(country)
                 .setRankNo(dto.getRankNo())
                 .setProductTitle(dto.getProductTitle())
                 .setImageUrl(dto.getImageUrl())

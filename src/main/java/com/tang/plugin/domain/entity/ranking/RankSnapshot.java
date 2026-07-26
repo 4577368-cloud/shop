@@ -15,6 +15,7 @@ import java.time.LocalDate;
 public class RankSnapshot {
     private Long id;
     private String shopName;
+    private String country;
     private String dateRange;
     private LocalDate startDate;
     private LocalDate endDate;

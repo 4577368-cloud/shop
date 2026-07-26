@@ -38,4 +38,5 @@ public class RankProduct {
     private Integer creatorCount;
     private Double creatorOrderRate;
     private String tiktokUrl;
+    private String country;
 }

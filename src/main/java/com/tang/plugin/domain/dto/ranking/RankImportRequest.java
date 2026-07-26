@@ -16,6 +16,7 @@ import java.util.List;
 @Accessors(chain = true)
 public class RankImportRequest {
     private String dateRange;
+    private String country;
     private LocalDate startDate;
     private LocalDate endDate;
     private List<RankProductRowDTO> products;

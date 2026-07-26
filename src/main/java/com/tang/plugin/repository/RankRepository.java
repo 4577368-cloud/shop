@@ -32,6 +32,7 @@ public class RankRepository {
     private static final RowMapper<RankSnapshot> SNAPSHOT_ROW_MAPPER = (rs, rowNum) -> new RankSnapshot()
             .setId(rs.getLong("id"))
             .setShopName(rs.getString("shop_name"))
+            .setCountry(rs.getString("country"))
             .setDateRange(rs.getString("date_range"))
             .setStartDate(rs.getObject("start_date", LocalDate.class))
             .setEndDate(rs.getObject("end_date", LocalDate.class))
@@ -62,18 +63,19 @@ public class RankRepository {
             .setCardGmvUsd(rs.getBigDecimal("card_gmv_usd"))
             .setCreatorCount((Integer) rs.getObject("creator_count"))
             .setCreatorOrderRate((Double) rs.getObject("creator_order_rate"))
-            .setTiktokUrl(rs.getString("tiktok_url"));
+            .setTiktokUrl(rs.getString("tiktok_url"))
+            .setCountry(rs.getString("country"));
 
     @Resource
     private JdbcTemplate jdbcTemplate;
 
     /**
-     * Upsert a snapshot by (shop_name, date_range). Returns the snapshot id.
+     * Upsert a snapshot by (shop_name, date_range, country). Returns the snapshot id.
      * Updates product_count / date bounds when the snapshot already exists.
      */
-    public Long upsertSnapshot(String shopName, String dateRange, LocalDate startDate,
+    public Long upsertSnapshot(String shopName, String country, String dateRange, LocalDate startDate,
                               LocalDate endDate, int productCount) {
-        Long existing = findActiveSnapshotId(shopName, dateRange);
+        Long existing = findActiveSnapshotId(shopName, country, dateRange);
         Timestamp now = Timestamp.from(Instant.now());
         if (existing != null) {
             jdbcTemplate.update(
@@ -90,30 +92,31 @@ public class RankRepository {
             PreparedStatement ps = con.prepareStatement(
                     """
                     INSERT INTO rank_snapshot
-                    (shop_name, date_range, start_date, end_date, product_count, created_at, updated_at, del_flag)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    (shop_name, country, date_range, start_date, end_date, product_count, created_at, updated_at, del_flag)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
                     new String[]{"id"});
             ps.setString(1, shopName);
-            ps.setString(2, dateRange);
-            ps.setObject(3, startDate);
-            ps.setObject(4, endDate);
-            ps.setInt(5, productCount);
-            ps.setTimestamp(6, now);
+            ps.setString(2, country == null ? "" : country);
+            ps.setString(3, dateRange);
+            ps.setObject(4, startDate);
+            ps.setObject(5, endDate);
+            ps.setInt(6, productCount);
             ps.setTimestamp(7, now);
+            ps.setTimestamp(8, now);
             return ps;
         }, keyHolder);
         return keyHolder.getKey() == null ? null : keyHolder.getKey().longValue();
     }
 
-    private Long findActiveSnapshotId(String shopName, String dateRange) {
+    private Long findActiveSnapshotId(String shopName, String country, String dateRange) {
         if (shopName == null || dateRange == null) {
             return null;
         }
         try {
             return jdbcTemplate.queryForObject(
-                    "SELECT id FROM rank_snapshot WHERE shop_name = ? AND date_range = ? AND del_flag = 0",
-                    Long.class, shopName, dateRange);
+                    "SELECT id FROM rank_snapshot WHERE shop_name = ? AND country = ? AND date_range = ? AND del_flag = 0",
+                    Long.class, shopName, country == null ? "" : country, dateRange);
         } catch (org.springframework.dao.EmptyResultDataAccessException e) {
             return null;
         }
@@ -123,7 +126,7 @@ public class RankRepository {
      * Replace all products for a snapshot (refresh semantics): delete existing
      * active rows, then batch-insert the new ones.
      */
-    public void replaceProducts(Long snapshotId, String shopName, List<RankProduct> products) {
+    public void replaceProducts(Long snapshotId, String shopName, String country, List<RankProduct> products) {
         if (snapshotId == null) {
             return;
         }
@@ -142,8 +145,8 @@ public class RankRepository {
                     (snapshot_id, shop_name, rank_no, product_title, image_url, category_l1, category_l2,
                      category_l3, category_path, price_usd, avg_price_usd, listed_at, rating, sales_volume,
                      commission_rate, gmv_usd, gmv_growth_rate, live_gmv_usd, video_gmv_usd, card_gmv_usd,
-                     creator_count, creator_order_rate, tiktok_url, del_flag)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                     creator_count, creator_order_rate, tiktok_url, country, del_flag)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
                     new BatchPreparedStatementSetter() {
                         @Override
@@ -172,6 +175,7 @@ public class RankRepository {
                             ps.setObject(21, p.getCreatorCount());
                             ps.setObject(22, p.getCreatorOrderRate());
                             ps.setString(23, p.getTiktokUrl());
+                            ps.setString(24, country == null ? "" : country);
                         }
 
                         @Override
@@ -191,7 +195,7 @@ public class RankRepository {
         }
         return jdbcTemplate.query(
                 """
-                SELECT id, shop_name, date_range, start_date, end_date, product_count, created_at
+                SELECT id, shop_name, country, date_range, start_date, end_date, product_count, created_at
                 FROM rank_snapshot
                 WHERE shop_name = ? AND del_flag = 0
                 ORDER BY start_date DESC NULLS LAST, id DESC
@@ -215,7 +219,7 @@ public class RankRepository {
                 SELECT id, snapshot_id, shop_name, rank_no, product_title, image_url, category_l1, category_l2,
                        category_l3, category_path, price_usd, avg_price_usd, listed_at, rating, sales_volume,
                        commission_rate, gmv_usd, gmv_growth_rate, live_gmv_usd, video_gmv_usd, card_gmv_usd,
-                       creator_count, creator_order_rate, tiktok_url
+                       creator_count, creator_order_rate, tiktok_url, country
                 FROM rank_product
                 WHERE snapshot_id = ? AND shop_name = ? AND del_flag = 0
                 """);
