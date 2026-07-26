@@ -162,7 +162,8 @@ public class PipispyClient {
                 data = root;
             }
             boolean ok = code == null || code == 0 || code == 200;
-            return new MarketingDataResponse(ok, "pipispy", data, consumed, remaining, code, msg);
+            return new MarketingDataResponse(ok, "pipispy", data, consumed, remaining, code, msg,
+                    null, null, null);
         } catch (Exception e) {
             log.error("pipispy response parse failed", e);
             return error(502, "invalid pipispy JSON");
@@ -170,7 +171,8 @@ public class PipispyClient {
     }
 
     private MarketingDataResponse error(int httpHint, String message) {
-        return new MarketingDataResponse(false, "pipispy", null, null, null, httpHint, message);
+        return new MarketingDataResponse(false, "pipispy", null, null, null, httpHint, message,
+                null, null, null);
     }
 
     private static Integer intOrNull(JsonNode n) {

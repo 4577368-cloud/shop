@@ -1,7 +1,9 @@
 package com.tang.plugin.controller.billing;
 
 import com.tang.plugin.dto.billing.BillingDtos.CreditLotListResponse;
+import com.tang.plugin.dto.billing.BillingDtos.CreditBucketBreakdown;
 import com.tang.plugin.dto.billing.BillingDtos.CreditOverview;
+import com.tang.plugin.dto.billing.BillingDtos.WelcomeClaimResponse;
 import com.tang.plugin.dto.billing.BillingDtos.CreditTransactionListResponse;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeCreditsRequest;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeCreditsResult;
@@ -87,6 +89,23 @@ public class CreditController {
             @RequestParam(value = "offset", defaultValue = "0") int offset) {
         Long userId = currentUserId(httpRequest);
         return ResponseEntity.ok(creditService.listLots(userId, limit, offset));
+    }
+
+    /** 双桶拆分（§4.5）：免费分 vs 付费分，供顶栏 / UsageCard / 个人中心钱包复用。 */
+    @GetMapping("/credits/buckets")
+    public ResponseEntity<CreditBucketBreakdown> buckets(HttpServletRequest httpRequest) {
+        Long userId = currentUserId(httpRequest);
+        return ResponseEntity.ok(creditService.getBucketBreakdown(userId));
+    }
+
+    /**
+     * 领取欢迎分（§4.2）。幂等：已领取返回 alreadyClaimed=true 且不重复发放。
+     * 成功发放 30 免费分（90 天有效）。
+     */
+    @PostMapping("/credits/welcome/claim")
+    public ResponseEntity<WelcomeClaimResponse> claimWelcome(HttpServletRequest httpRequest) {
+        Long userId = currentUserId(httpRequest);
+        return ResponseEntity.ok(creditService.claimWelcome(userId));
     }
 
     /**

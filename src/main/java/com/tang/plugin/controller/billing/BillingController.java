@@ -5,8 +5,10 @@ import com.tang.plugin.dto.billing.BillingDtos.AccountOverview;
 import com.tang.plugin.dto.billing.BillingDtos.CapturePayPalOrderResponse;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeBalanceRequest;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeResult;
+import com.tang.plugin.dto.billing.BillingDtos.CreatePackOrderRequest;
 import com.tang.plugin.dto.billing.BillingDtos.CreatePayPalOrderRequest;
 import com.tang.plugin.dto.billing.BillingDtos.CreatePayPalOrderResponse;
+import com.tang.plugin.dto.billing.BillingDtos.CreateSubscriptionRequest;
 import com.tang.plugin.dto.billing.BillingDtos.PaymentOrderItem;
 import com.tang.plugin.dto.billing.BillingDtos.PaymentOrderListResponse;
 import com.tang.plugin.dto.billing.BillingDtos.RechargeRequest;
@@ -114,6 +116,28 @@ public class BillingController {
             @PathVariable String paypalOrderId) {
         Long userId = currentUserId(httpRequest);
         return ResponseEntity.ok(billingService.capturePayPalOrder(userId, paypalOrderId));
+    }
+
+    /**
+     * 创建月订 PayPal 订单（purpose=subscribe）。捕获后发放月订积分（§5 / D5）。
+     */
+    @PostMapping("/paypal/create-subscription")
+    public ResponseEntity<CreatePayPalOrderResponse> createSubscription(
+            HttpServletRequest httpRequest,
+            @RequestBody CreateSubscriptionRequest req) {
+        Long userId = currentUserId(httpRequest);
+        return ResponseEntity.ok(billingService.createSubscriptionOrder(userId, req));
+    }
+
+    /**
+     * 创建加购包 PayPal 订单（purpose=credit_pack）。捕获后发放加购积分（§5 / D5）。
+     */
+    @PostMapping("/paypal/create-pack-order")
+    public ResponseEntity<CreatePayPalOrderResponse> createPackOrder(
+            HttpServletRequest httpRequest,
+            @RequestBody CreatePackOrderRequest req) {
+        Long userId = currentUserId(httpRequest);
+        return ResponseEntity.ok(billingService.createPackOrder(userId, req));
     }
 
     // ===== Payment Orders (P3.5) =====

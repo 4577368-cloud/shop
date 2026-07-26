@@ -10,7 +10,7 @@ public final class MarketingDtos {
     private MarketingDtos() {}
 
     /** Frontend → plugin (key is injected server-side, never accepted from browser). */
-    public record MarketingDataRequest(String uri, Map<String, Object> params) {}
+    public record MarketingDataRequest(String uri, Map<String, Object> params, Integer expectedCredits) {}
 
     /** Plugin → frontend (aligns with shopify MarketingResponse). */
     public record MarketingDataResponse(
@@ -20,10 +20,13 @@ public final class MarketingDtos {
             Integer consumedCredits,
             Integer remainingCredits,
             Integer code,
-            String message) {}
+            String message,
+            Integer chargedCredits,
+            Integer remainingUserCredits,
+            Boolean freeWindow) {}
 
     /** Dossier fan-out: one pipispy call to batch. {@code tag} is the client-side key for the result. */
-    public record DossierRequestItem(String tag, String uri, Map<String, Object> params) {}
+    public record DossierRequestItem(String tag, String uri, Map<String, Object> params, Integer expectedCredits) {}
 
     /** Dossier fan-out request: a batch of pipispy calls executed server-side in parallel. */
     public record DossierRequest(List<DossierRequestItem> requests) {}

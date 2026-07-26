@@ -185,4 +185,28 @@ public class CreditLotRepository {
                 """,
                 userId, Timestamp.from(Instant.now()));
     }
+
+    /**
+     * 按 source_type 汇总各桶剩余积分（未过期且有剩余），用于双桶拆分展示（§4.5）。
+     *
+     * @return source_type → 剩余积分
+     */
+    public java.util.Map<String, Integer> sumRemainingBySourceType(Long userId) {
+        List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
+                """
+                SELECT source_type, SUM(amount_granted - amount_consumed - amount_expired) AS rem
+                FROM credit_lots
+                WHERE user_id = ? AND amount_granted - amount_consumed - amount_expired > 0
+                GROUP BY source_type
+                """,
+                userId);
+        java.util.Map<String, Integer> out = new java.util.HashMap<>();
+        for (java.util.Map<String, Object> row : rows) {
+            String st = (String) row.get("source_type");
+            Object rem = row.get("rem");
+            int v = rem instanceof Number ? ((Number) rem).intValue() : 0;
+            out.put(st, v);
+        }
+        return out;
+    }
 }

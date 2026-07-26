@@ -3,7 +3,9 @@ package com.tang.plugin.service.billing;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.config.PayPalProperties;
 import com.tang.plugin.domain.entity.user.AccountTransaction;
+import com.tang.plugin.domain.entity.user.CreditPackage;
 import com.tang.plugin.domain.entity.user.PaymentOrder;
+import com.tang.plugin.domain.entity.user.SubscriptionPlan;
 import com.tang.plugin.domain.entity.user.UserAccount;
 import com.tang.plugin.dto.billing.BillingDtos;
 import com.tang.plugin.dto.billing.BillingDtos.AccountOverview;
@@ -12,13 +14,17 @@ import com.tang.plugin.dto.billing.BillingDtos.ConsumeBalanceRequest;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeResult;
 import com.tang.plugin.dto.billing.BillingDtos.CreatePayPalOrderRequest;
 import com.tang.plugin.dto.billing.BillingDtos.CreatePayPalOrderResponse;
+import com.tang.plugin.dto.billing.BillingDtos.CreatePackOrderRequest;
+import com.tang.plugin.dto.billing.BillingDtos.CreateSubscriptionRequest;
 import com.tang.plugin.dto.billing.BillingDtos.PaymentOrderItem;
 import com.tang.plugin.dto.billing.BillingDtos.PaymentOrderListResponse;
 import com.tang.plugin.dto.billing.BillingDtos.RechargeRequest;
 import com.tang.plugin.dto.billing.BillingDtos.TransactionItem;
 import com.tang.plugin.dto.billing.BillingDtos.TransactionListResponse;
 import com.tang.plugin.repository.AccountTransactionRepository;
+import com.tang.plugin.repository.CreditPackageRepository;
 import com.tang.plugin.repository.PaymentOrderRepository;
+import com.tang.plugin.repository.SubscriptionPlanRepository;
 import com.tang.plugin.repository.UserAccountRepository;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -53,10 +59,19 @@ public class BillingService {
     private PaymentOrderRepository paymentOrderRepository;
 
     @Resource
+    private SubscriptionPlanRepository planRepository;
+
+    @Resource
+    private CreditPackageRepository packRepository;
+
+    @Resource
     private PayPalClient payPalClient;
 
     @Resource
     private PayPalProperties payPalProperties;
+
+    @Resource
+    private CreditService creditService;
 
     @Resource
     private TransactionTemplate transactionTemplate;
@@ -403,7 +418,7 @@ public class BillingService {
                     ? getBalanceCny(userId)
                     : null;
             return new CapturePayPalOrderResponse(true, "captured", order.getPurpose(),
-                    order.getRefId(), balanceAfter, null);
+                    order.getRefId(), balanceAfter, null, null, null);
         }
 
         // 幂等：capturing 状态说明有其他请求正在 capture（或上次 capture 后落库失败）
@@ -411,7 +426,7 @@ public class BillingService {
         if ("capturing".equals(order.getStatus())) {
             log.info("PayPal order is being captured by another request: {}", paypalOrderId);
             return new CapturePayPalOrderResponse(false, "capturing", order.getPurpose(),
-                    order.getRefId(), null, "CAPTURE_IN_PROGRESS");
+                    order.getRefId(), null, "CAPTURE_IN_PROGRESS", null, null);
         }
 
         // 乐观锁：原子推进 created/approved → capturing
@@ -424,10 +439,10 @@ public class BillingService {
                         ? getBalanceCny(userId)
                         : null;
                 return new CapturePayPalOrderResponse(true, "captured", fresh.getPurpose(),
-                        fresh.getRefId(), balanceAfter, null);
+                        fresh.getRefId(), balanceAfter, null, null, null);
             }
             return new CapturePayPalOrderResponse(false, "capturing", fresh.getPurpose(),
-                    fresh.getRefId(), null, "CAPTURE_IN_PROGRESS");
+                    fresh.getRefId(), null, "CAPTURE_IN_PROGRESS", null, null);
         }
 
         try {
@@ -437,6 +452,10 @@ public class BillingService {
             // capture 成功：根据用途分别处理（事务内落库）
             if ("balance_recharge".equals(order.getPurpose())) {
                 return handleRechargeCapture(userId, order, capture);
+            } else if ("subscribe".equals(order.getPurpose())) {
+                return handleCreditCapture(userId, order, capture, true);
+            } else if ("credit_pack".equals(order.getPurpose())) {
+                return handleCreditCapture(userId, order, capture, false);
             } else {
                 return handleOrderPaymentCapture(userId, order, capture);
             }
@@ -446,14 +465,14 @@ public class BillingService {
             paymentOrderRepository.markFailed(paypalOrderId, e.getMessage());
             log.warn("PayPal capture failed: orderId={} reason={}", paypalOrderId, e.getMessage());
             return new CapturePayPalOrderResponse(false, "failed", order.getPurpose(),
-                    order.getRefId(), null, e.getCode());
+                    order.getRefId(), null, e.getCode(), null, null);
         } catch (Exception e) {
             // 未知异常（可能是网络瞬断，PayPal 实际状态未知）：保留 capturing 状态，
             // 等 P3.3 webhook 自愈或用户重试。不 markFailed。
             log.error("PayPal capture unexpected error (keeping capturing status): orderId={}",
                     paypalOrderId, e);
             return new CapturePayPalOrderResponse(false, "capturing", order.getPurpose(),
-                    order.getRefId(), null, "CAPTURE_UNKNOWN_RETRY_LATER");
+                    order.getRefId(), null, "CAPTURE_UNKNOWN_RETRY_LATER", null, null);
         }
     }
 
@@ -509,7 +528,7 @@ public class BillingService {
                     userId, order.getPaypalOrderId(), cnyCents, balanceAfter);
 
             return new CapturePayPalOrderResponse(true, "captured", order.getPurpose(),
-                    order.getRefId(), balanceAfter, null);
+                    order.getRefId(), balanceAfter, null, null, null);
         });
     }
 
@@ -525,8 +544,92 @@ public class BillingService {
         log.info("PayPal order payment captured: userId={} paypalOrderId={} shopifyOrder={} usd={}cny",
                 userId, order.getPaypalOrderId(), order.getRefId(), order.getAmountUsdCents());
 
-        return new CapturePayPalOrderResponse(true, "captured", order.getPurpose(),
-                order.getRefId(), null, null);
+            return new CapturePayPalOrderResponse(true, "captured", order.getPurpose(),
+                order.getRefId(), null, null, null, null);
+    }
+
+    // ===== 商业化：月订 / 加购包（§5 / D5） =====
+
+    /**
+     * 创建月订 PayPal 订单（purpose=subscribe，refId=planCode）。
+     * 捕获成功后由 {@link #handleCreditCapture} 发放积分。
+     */
+    public CreatePayPalOrderResponse createSubscriptionOrder(Long userId, CreateSubscriptionRequest req) {
+        if (!payPalProperties.isEnabled()) {
+            throw new CustomException("PayPal is not configured", 503, "PAYPAL_NOT_CONFIGURED");
+        }
+        if (req == null || StringUtils.isBlank(req.planCode())) {
+            throw new CustomException("planCode is required", 400, "PLAN_REQUIRED");
+        }
+        SubscriptionPlan plan = planRepository.findByCode(req.planCode());
+        if (plan == null) {
+            throw new CustomException("Unknown plan: " + req.planCode(), 400, "UNKNOWN_PLAN");
+        }
+        Long amountUsdCents = plan.getPriceUsdCents();
+        ensureAccount(userId);
+        String description = plan.getName() + " subscription";
+        String customId = "user_" + userId;
+        String paypalOrderId = payPalClient.createOrder(amountUsdCents, description, customId);
+        PaymentOrder order = new PaymentOrder()
+                .setUserId(userId)
+                .setPaypalOrderId(paypalOrderId)
+                .setPurpose("subscribe")
+                .setRefId(plan.getCode())
+                .setAmountUsdCents(amountUsdCents)
+                .setStatus("created");
+        paymentOrderRepository.insert(order);
+        log.info("Subscription PayPal order created: userId={} plan={} paypalOrderId={}",
+                userId, plan.getCode(), paypalOrderId);
+        return new CreatePayPalOrderResponse(paypalOrderId, "subscribe", amountUsdCents, null, "created");
+    }
+
+    /**
+     * 创建加购包 PayPal 订单（purpose=credit_pack，refId=packageCode）。
+     */
+    public CreatePayPalOrderResponse createPackOrder(Long userId, CreatePackOrderRequest req) {
+        if (!payPalProperties.isEnabled()) {
+            throw new CustomException("PayPal is not configured", 503, "PAYPAL_NOT_CONFIGURED");
+        }
+        if (req == null || StringUtils.isBlank(req.packageCode())) {
+            throw new CustomException("packageCode is required", 400, "PACKAGE_REQUIRED");
+        }
+        CreditPackage pkg = packRepository.findByCode(req.packageCode());
+        if (pkg == null) {
+            throw new CustomException("Unknown package: " + req.packageCode(), 400, "UNKNOWN_PACKAGE");
+        }
+        Long amountUsdCents = pkg.getPriceUsdCents();
+        ensureAccount(userId);
+        String description = pkg.getName() + " credits";
+        String customId = "user_" + userId;
+        String paypalOrderId = payPalClient.createOrder(amountUsdCents, description, customId);
+        PaymentOrder order = new PaymentOrder()
+                .setUserId(userId)
+                .setPaypalOrderId(paypalOrderId)
+                .setPurpose("credit_pack")
+                .setRefId(pkg.getCode())
+                .setAmountUsdCents(amountUsdCents)
+                .setStatus("created");
+        paymentOrderRepository.insert(order);
+        log.info("Pack PayPal order created: userId={} package={} paypalOrderId={}",
+                userId, pkg.getCode(), paypalOrderId);
+        return new CreatePayPalOrderResponse(paypalOrderId, "credit_pack", amountUsdCents, null, "created");
+    }
+
+    /**
+     * 月订 / 加购包捕获：调 PayPal 扣款成功后发放积分（事务内 grant + markCaptured）。
+     */
+    private CapturePayPalOrderResponse handleCreditCapture(Long userId, PaymentOrder order,
+                                                           PayPalClient.CaptureResult capture,
+                                                           boolean isSubscription) {
+        String code = order.getRefId();
+        BillingDtos.GrantCreditsResult grant = isSubscription
+                ? creditService.grantSubscriptionCredits(userId, code, order.getId())
+                : creditService.grantPackCredits(userId, code, order.getId());
+        paymentOrderRepository.markCaptured(order.getPaypalOrderId(), capture.captureId(), null);
+        log.info("Credit grant captured: userId={} purpose={} code={} granted={}",
+                userId, order.getPurpose(), code, grant.grantedCredits());
+        return new CapturePayPalOrderResponse(true, "captured", order.getPurpose(), order.getRefId(),
+                null, null, grant.grantedCredits(), grant.balanceAfter());
     }
 
     // ===== Webhook (P3.3) =====
@@ -593,6 +696,8 @@ public class BillingService {
 
         if ("balance_recharge".equals(order.getPurpose())) {
             return healRechargeCapture(order, captureId);
+        } else if ("subscribe".equals(order.getPurpose()) || "credit_pack".equals(order.getPurpose())) {
+            return healCreditCapture(order, captureId, "subscribe".equals(order.getPurpose()));
         } else {
             return healOrderPaymentCapture(order, captureId);
         }
@@ -607,9 +712,28 @@ public class BillingService {
     public WebhookHandleResult healFromExternalCapture(PaymentOrder order, String captureId) {
         if ("balance_recharge".equals(order.getPurpose())) {
             return healRechargeCapture(order, captureId);
+        } else if ("subscribe".equals(order.getPurpose()) || "credit_pack".equals(order.getPurpose())) {
+            return healCreditCapture(order, captureId, "subscribe".equals(order.getPurpose()));
         } else {
             return healOrderPaymentCapture(order, captureId);
         }
+    }
+
+    /** Webhook 自愈：月订/加购包发放积分（不调 PayPal，资金已由 webhook 确认）。 */
+    private WebhookHandleResult healCreditCapture(PaymentOrder order, String captureId, boolean isSubscription) {
+        String code = order.getRefId();
+        Long userId = order.getUserId();
+        // grant 已做幂等性（同 plan/package 可重复捕获但积分只按一次 plan 发；避免重复发放用捕获标记）
+        BillingDtos.GrantCreditsResult grant = isSubscription
+                ? creditService.grantSubscriptionCredits(userId, code, order.getId())
+                : creditService.grantPackCredits(userId, code, order.getId());
+        int marked = paymentOrderRepository.markCaptured(order.getPaypalOrderId(), captureId, null);
+        if (marked == 0) {
+            throw new IllegalStateException("markCaptured affected 0 rows for " + order.getPaypalOrderId());
+        }
+        log.info("Webhook self-healed credit grant: userId={} purpose={} code={} granted={}",
+                userId, order.getPurpose(), code, grant.grantedCredits());
+        return new WebhookHandleResult(true, "HEALED_CREDIT", order.getPaypalOrderId());
     }
 
     /**

@@ -113,7 +113,9 @@ public final class BillingDtos {
             String purpose,
             String refId,
             Long balanceAfter,      // balance_recharge 时返回新余额（分 CNY）；order_payment 时为 null
-            String errorCode
+            String errorCode,
+            Integer grantedCredits, // subscribe / credit_pack 时返回本次发放积分数
+            Integer creditsAfter    // subscribe / credit_pack 时返回发放后用户积分余额
     ) {}
 
     // ===== Credits (P4) =====
@@ -176,7 +178,8 @@ public final class BillingDtos {
             boolean success,
             Integer balanceAfter,
             Long lotId,
-            Long transactionId
+            Long transactionId,
+            Integer grantedCredits
     ) {}
 
     public record CreditTransactionItem(
@@ -276,6 +279,12 @@ public final class BillingDtos {
     ) {}
 
     public record CatalogResponse(java.util.List<CatalogItem> plans, java.util.List<CatalogItem> packages) {}
+
+    /** 创建月订 PayPal 订单请求（§5 / D5）。 */
+    public record CreateSubscriptionRequest(String planCode) {}
+
+    /** 创建加购包 PayPal 订单请求（§5 / D5）。 */
+    public record CreatePackOrderRequest(String packageCode) {}
 
     // ===== Payment Orders (P3.5 — expose list/detail) =====
 

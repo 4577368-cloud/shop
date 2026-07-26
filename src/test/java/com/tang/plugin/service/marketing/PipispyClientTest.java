@@ -46,8 +46,8 @@ class PipispyClientTest {
     @Test
     void fanOutWhenNotConfiguredReturnsErrorForEachItem() {
         var items = List.of(
-                new MarketingDtos.DossierRequestItem("a", "/v3/api/open/store/list", Map.of()),
-                new MarketingDtos.DossierRequestItem("b", "/v3/api/open/store/list", Map.of())
+                new MarketingDtos.DossierRequestItem("a", "/v3/api/open/store/list", Map.of(), null),
+                new MarketingDtos.DossierRequestItem("b", "/v3/api/open/store/list", Map.of(), null)
         );
         Map<String, com.tang.plugin.dto.marketing.MarketingDtos.MarketingDataResponse> out = client.fanOut(items);
         assertEquals(2, out.size());

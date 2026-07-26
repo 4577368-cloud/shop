@@ -9,6 +9,8 @@ import com.tang.plugin.dto.marketing.MarketingDtos.DossierResponse;
 import com.tang.plugin.dto.marketing.MarketingDtos.MarketingDataResponse;
 import com.tang.plugin.service.marketing.CompetitorStoreService;
 import com.tang.plugin.service.marketing.PipispyClient;
+import com.tang.plugin.service.billing.CreditService;
+import com.tang.plugin.repository.CreditTransactionRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,10 +24,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 /**
  * pipispy marketing proxy for the operations center.
@@ -66,11 +71,16 @@ public class MarketingController {
     private final PipispyClient pipispyClient;
     private final ObjectMapper objectMapper;
     private final CompetitorStoreService competitorStoreService;
+    private final CreditService creditService;
+    private final CreditTransactionRepository txnRepository;
 
   @PostMapping("/data")
-  public ResponseEntity<MarketingDataResponse> postData(@RequestBody MarketingDataRequest body) {
+  public ResponseEntity<MarketingDataResponse> postData(
+      HttpServletRequest httpRequest,
+      @RequestBody MarketingDataRequest body) {
     assertAllowedUri(body.uri());
-    return toHttp(pipispyClient.postData(body.uri(), body.params()));
+    Long userId = currentUserId(httpRequest);
+    return toHttp(handleMarketing(userId, body.uri(), body.params(), body.expectedCredits()));
   }
 
   /**
@@ -78,16 +88,73 @@ public class MarketingController {
    */
   @GetMapping("/data")
   public ResponseEntity<MarketingDataResponse> getData(
+      HttpServletRequest httpRequest,
       @RequestParam String uri,
-      @RequestParam(required = false) String params) {
+      @RequestParam(required = false) String params,
+      @RequestParam(required = false) Integer expectedCredits) {
     assertAllowedUri(uri);
+    Long userId = currentUserId(httpRequest);
     Map<String, Object> map = parseParams(params);
-    return toHttp(pipispyClient.postData(uri, map));
+    return toHttp(handleMarketing(userId, uri, map, expectedCredits));
   }
 
   @GetMapping("/credits-balance")
   public ResponseEntity<MarketingDataResponse> creditsBalance() {
     return toHttp(pipispyClient.fetchCreditsBalance());
+  }
+
+  /**
+   * 服务端门禁（§4.3）：免费端点直接放行；3 日窗命中放行（仍取数但不扣）；
+   * 其余端点先预估 assert（余额 ≥ estimate 否则 402），调上游成功后再按 U×2 扣用户钱包。
+   */
+  private MarketingDataResponse handleMarketing(Long userId, String uri, Map<String, Object> params,
+                                                Integer expectedCredits) {
+    String endpoint = endpointOf(uri);
+    String entityId = entityIdOf(params);
+
+    // 1) 永久免费端点（在投商品）
+    if (isFreeUri(uri)) {
+      MarketingDataResponse res = pipispyClient.postData(uri, params);
+      if (res.ok()) res = withBilling(res, 0, creditService.getBalance(userId), true);
+      return res;
+    }
+
+    // 2) 3 日免费窗：同 id 详情/店铺分析最近 3 天已扣 → 放行不扣（仍取数）
+    if (isWindowedUri(uri) && entityId != null
+        && recentConsumeExists(userId, endpoint, entityId)) {
+      MarketingDataResponse res = pipispyClient.postData(uri, params);
+      if (res.ok()) res = withBilling(res, 0, creditService.getBalance(userId), true);
+      return res;
+    }
+
+    // 3) 预估 assert（防浪费上游额度）
+    int estimate = expectedCredits != null ? expectedCredits : defaultEstimate(uri, params, 12);
+    Integer balance = creditService.getBalance(userId);
+    if (balance == null || balance < estimate) {
+      throw new com.tang.common.core.exception.CustomException(
+          "Insufficient credits (need ~" + estimate + ", have " + balance + ")", 402, "INSUFFICIENT_CREDITS");
+    }
+
+    // 4) 调上游
+    MarketingDataResponse res = pipispyClient.postData(uri, params);
+    if (!res.ok()) return res;
+
+    // 5) 实扣 = 上游 U × 2
+    int upstreamU = res.consumedCredits() != null ? res.consumedCredits() : 0;
+    if (upstreamU <= 0) {
+      return withBilling(res, 0, creditService.getBalance(userId), false);
+    }
+    String effectiveCacheKey = entityId != null ? entityId : defaultCacheKey(uri, params);
+    com.tang.plugin.dto.billing.BillingDtos.MarketingChargeResult charge =
+        creditService.chargeMarketingCall(userId, upstreamU, uri, effectiveCacheKey, endpoint, entityId);
+    return withBilling(res, charge.chargedCredits(), charge.balanceAfter(), false);
+  }
+
+  /** 把计费字段注入响应（用户钱包语义）。 */
+  private MarketingDataResponse withBilling(MarketingDataResponse res, int charged,
+                                             Integer userBalance, boolean freeWindow) {
+    return new MarketingDataResponse(res.ok(), res.source(), res.data(), res.consumedCredits(),
+        userBalance, res.code(), res.message(), charged, userBalance, freeWindow);
   }
 
   /**
@@ -162,8 +229,16 @@ public class MarketingController {
    * Per-call billing (and pipispy's own 3-day free window) still applies; this only collapses
    * N browser→server hops into 1.
    */
+  /**
+   * Server-side dossier fan-out with billing gating (§4.3).
+   * 每个 item 独立预判 + 调上游 + 按 U×2 扣费；免费/3 日窗 item 不扣。
+   * 总预估不足时整体 402（用户可缩小范围重试）。
+   */
   @PostMapping("/dossier")
-  public ResponseEntity<DossierResponse> dossier(@RequestBody DossierRequest body) {
+  public ResponseEntity<DossierResponse> dossier(
+      HttpServletRequest httpRequest,
+      @RequestBody DossierRequest body) {
+    Long userId = currentUserId(httpRequest);
     List<DossierRequestItem> items = body.requests() == null ? List.of() : body.requests();
     if (items.size() > MAX_DOSSIER_ITEMS) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -172,13 +247,54 @@ public class MarketingController {
     for (DossierRequestItem item : items) {
         assertAllowedUri(item.uri());
     }
-    Map<String, MarketingDataResponse> results = pipispyClient.fanOut(items);
-    int total = results.values().stream()
-        .map(MarketingDataResponse::consumedCredits)
-        .filter(Objects::nonNull)
-        .mapToInt(Integer::intValue)
-        .sum();
-    return ResponseEntity.ok(new DossierResponse(results, total));
+
+    // 总预估（免费/窗口 item 不计入）
+    int totalEstimate = 0;
+    for (DossierRequestItem item : items) {
+        if (!isFreeUri(item.uri())
+            && !(isWindowedUri(item.uri()) && entityIdOf(item.params()) != null
+                && recentConsumeExists(userId, endpointOf(item.uri()), entityIdOf(item.params())))) {
+            totalEstimate += item.expectedCredits() != null ? item.expectedCredits()
+                : defaultEstimate(item.uri(), item.params(), 7);
+        }
+    }
+    Integer balance = creditService.getBalance(userId);
+    if (balance != null && balance < totalEstimate) {
+        throw new com.tang.common.core.exception.CustomException(
+            "Insufficient credits (need ~" + totalEstimate + ", have " + balance + ")", 402, "INSUFFICIENT_CREDITS");
+    }
+
+    Map<String, MarketingDataResponse> results = new LinkedHashMap<>();
+    int totalCharged = 0;
+    for (DossierRequestItem item : items) {
+        String endpoint = endpointOf(item.uri());
+        String entityId = entityIdOf(item.params());
+        MarketingDataResponse r;
+        if (isFreeUri(item.uri())) {
+            r = pipispyClient.postData(item.uri(), item.params());
+            if (r.ok()) r = withBilling(r, 0, creditService.getBalance(userId), true);
+        } else if (isWindowedUri(item.uri()) && entityId != null
+            && recentConsumeExists(userId, endpoint, entityId)) {
+            r = pipispyClient.postData(item.uri(), item.params());
+            if (r.ok()) r = withBilling(r, 0, creditService.getBalance(userId), true);
+        } else {
+            r = pipispyClient.postData(item.uri(), item.params());
+            if (r.ok()) {
+                int upstreamU = r.consumedCredits() != null ? r.consumedCredits() : 0;
+                if (upstreamU > 0) {
+                    String effectiveCacheKey = entityId != null ? entityId : defaultCacheKey(item.uri(), item.params());
+                    com.tang.plugin.dto.billing.BillingDtos.MarketingChargeResult ch =
+                        creditService.chargeMarketingCall(userId, upstreamU, item.uri(), effectiveCacheKey, endpoint, entityId);
+                    r = withBilling(r, ch.chargedCredits(), ch.balanceAfter(), false);
+                    totalCharged += ch.chargedCredits();
+                } else {
+                    r = withBilling(r, 0, creditService.getBalance(userId), false);
+                }
+            }
+        }
+        results.put(item.tag() != null ? item.tag() : item.uri(), r);
+    }
+    return ResponseEntity.ok(new DossierResponse(results, totalCharged));
   }
 
   // ===== Competitor watchlist =====
@@ -217,6 +333,78 @@ public class MarketingController {
               "Unauthorized: login required", 401, "UNAUTHENTICATED");
     }
     return userId;
+  }
+
+  // ===== 计费辅助（§4.3） =====
+
+  /** 从 pipispy URI 提取接口名（去前缀），用于流水 endpoint 与 3 日窗查询。 */
+  private static String endpointOf(String uri) {
+    if (uri == null) return "";
+    return uri.startsWith("/v3/api/open/") ? uri.substring("/v3/api/open/".length()) : uri;
+  }
+
+  /** 从 params 提取实体 id（详情/店铺分析按 id 享 3 日窗）。 */
+  private static String entityIdOf(Map<String, Object> params) {
+    if (params == null) return null;
+    for (String key : new String[]{"id", "storeId", "productId", "store_id", "product_id"}) {
+      Object v = params.get(key);
+      if (v != null) return String.valueOf(v);
+    }
+    return null;
+  }
+
+  /** 永久免费端点（在投商品）。 */
+  private static boolean isFreeUri(String uri) {
+    return uri != null && uri.contains("/store/detail/competition/products");
+  }
+
+  /** 享 3 日免费窗的端点（同 id 详情/店铺分析）。 */
+  private static boolean isWindowedUri(String uri) {
+    if (uri == null) return false;
+    return uri.contains("/ad-products/detail")
+        || uri.contains("/tiktok-shop/shop/detail")
+        || uri.contains("/store/data-analysis")
+        || uri.contains("/store/region-analysis")
+        || uri.contains("/store/delivery-analysis")
+        || uri.contains("/store/ad-trend")
+        || uri.contains("/store/longest-run-ads")
+        || uri.contains("/store/most-used-ads")
+        || uri.contains("/store/fb-pages");
+  }
+
+  /** 预估用户积分（= 上游 U × 2 的下界估计）。 */
+  private int defaultEstimate(String uri, Map<String, Object> params, int defaultPageSize) {
+    if (uri != null && uri.contains("ai-search/image")) return 6;
+    if (isWindowedUri(uri)) return 2;
+    int pageSize = defaultPageSize;
+    if (params != null) {
+      Object ps = params.get("pageSize");
+      if (ps instanceof Number n) pageSize = n.intValue();
+      else if (ps instanceof String s) {
+        try { pageSize = Integer.parseInt(s); } catch (NumberFormatException ignored) {}
+      }
+    }
+    return Math.max(1, pageSize) * 2;
+  }
+
+  /** 稳定请求签名（用于幂等键；不同页/筛选 → 不同键）。 */
+  private String defaultCacheKey(String uri, Map<String, Object> params) {
+    return uri + "|" + signatureOf(params);
+  }
+
+  private String signatureOf(Map<String, Object> params) {
+    if (params == null) return "";
+    try {
+      return objectMapper.writeValueAsString(params);
+    } catch (Exception e) {
+      return String.valueOf(params);
+    }
+  }
+
+  /** 同 id 详情/店铺分析最近 3 天是否已扣费（3 日窗判定）。 */
+  private boolean recentConsumeExists(Long userId, String endpoint, String entityId) {
+    return txnRepository.findRecentConsume(userId, endpoint, entityId,
+        Instant.now().minus(3, ChronoUnit.DAYS)) != null;
   }
 
   private void assertAllowedUri(String uri) {
