@@ -3,6 +3,9 @@ package com.tang.plugin.controller.marketing;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tang.plugin.dto.marketing.MarketingDtos.MarketingDataRequest;
+import com.tang.plugin.dto.marketing.MarketingDtos.DossierRequest;
+import com.tang.plugin.dto.marketing.MarketingDtos.DossierRequestItem;
+import com.tang.plugin.dto.marketing.MarketingDtos.DossierResponse;
 import com.tang.plugin.dto.marketing.MarketingDtos.MarketingDataResponse;
 import com.tang.plugin.service.marketing.PipispyClient;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +20,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * pipispy marketing proxy for the operations center.
@@ -52,6 +57,24 @@ public class MarketingController {
   @GetMapping("/credits-balance")
   public ResponseEntity<MarketingDataResponse> creditsBalance() {
     return toHttp(pipispyClient.fetchCreditsBalance());
+  }
+
+  /**
+   * Server-side dossier fan-out: batch multiple pipispy calls into a single round-trip.
+   * Each item carries its own {@code uri} + {@code params}; results are keyed by {@code tag}.
+   * Per-call billing (and pipispy's own 3-day free window) still applies; this only collapses
+   * N browser→server hops into 1.
+   */
+  @PostMapping("/dossier")
+  public ResponseEntity<DossierResponse> dossier(@RequestBody DossierRequest body) {
+    List<DossierRequestItem> items = body.requests() == null ? List.of() : body.requests();
+    Map<String, MarketingDataResponse> results = pipispyClient.fanOut(items);
+    int total = results.values().stream()
+        .map(MarketingDataResponse::consumedCredits)
+        .filter(Objects::nonNull)
+        .mapToInt(Integer::intValue)
+        .sum();
+    return ResponseEntity.ok(new DossierResponse(results, total));
   }
 
   private Map<String, Object> parseParams(String paramsJson) {

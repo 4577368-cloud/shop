@@ -3,18 +3,26 @@ package com.tang.plugin.service.marketing;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tang.plugin.config.PipispyProperties;
+import com.tang.plugin.dto.marketing.MarketingDtos.DossierRequestItem;
 import com.tang.plugin.dto.marketing.MarketingDtos.MarketingDataResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.AbstractMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * Server-side pipispy proxy. Injects API key; browsers never see it.
@@ -26,6 +34,13 @@ public class PipispyClient {
 
     private final PipispyProperties props;
     private final ObjectMapper objectMapper;
+    /** Bounded executor for fan-out to prevent ForkJoinPool common-pool exhaustion. */
+    private final ExecutorService fanOutExecutor = Executors.newFixedThreadPool(16,
+            r -> {
+                Thread t = new Thread(r, "pipispy-fanout-" + System.nanoTime());
+                t.setDaemon(true);
+                return t;
+            });
 
     public MarketingDataResponse postData(String uri, Map<String, Object> params) {
         if (!props.isConfigured()) {
@@ -72,6 +87,46 @@ public class PipispyClient {
             log.error("pipispy credits-balance failed", e);
             return error(502, "pipispy credits-balance failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Server-side fan-out: execute a batch of pipispy calls in parallel and return them keyed by tag.
+     * The API key is injected server-side per call (browsers never see it). Each call is billed by
+     * pipispy independently; the sum of {@code consumed_credits} is reported in the response.
+     */
+    public Map<String, MarketingDataResponse> fanOut(List<DossierRequestItem> items) {
+        Map<String, MarketingDataResponse> out = new LinkedHashMap<>();
+        if (!props.isConfigured()) {
+            MarketingDataResponse err = error(503, "PIPIADS API key not configured on server");
+            for (DossierRequestItem item : items) {
+                out.put(tagOf(item), err);
+            }
+            return out;
+        }
+        if (items == null || items.isEmpty()) {
+            return out;
+        }
+        List<CompletableFuture<Map.Entry<String, MarketingDataResponse>>> futures = items.stream()
+                .map(item -> CompletableFuture.supplyAsync(() -> {
+                    String tag = tagOf(item);
+                    MarketingDataResponse r = postData(item.uri(), item.params() == null ? Map.of() : item.params());
+                    Map.Entry<String, MarketingDataResponse> entry = new AbstractMap.SimpleEntry<>(tag, r);
+                    return entry;
+                }, fanOutExecutor))
+                .collect(Collectors.toList());
+        for (CompletableFuture<Map.Entry<String, MarketingDataResponse>> f : futures) {
+            try {
+                Map.Entry<String, MarketingDataResponse> e = f.join();
+                out.put(e.getKey(), e.getValue());
+            } catch (Exception ex) {
+                log.error("pipispy fan-out join failed", ex);
+            }
+        }
+        return out;
+    }
+
+    private static String tagOf(DossierRequestItem item) {
+        return StringUtils.isNotBlank(item.tag()) ? item.tag() : item.uri();
     }
 
     private RestClient restClient() {
@@ -126,5 +181,10 @@ public class PipispyClient {
     private static String textOrNull(JsonNode n) {
         if (n == null || n.isNull()) return null;
         return n.asText(null);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        fanOutExecutor.shutdown();
     }
 }
