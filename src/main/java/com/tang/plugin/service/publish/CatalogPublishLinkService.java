@@ -293,17 +293,55 @@ public class CatalogPublishLinkService {
                         .findBindableBySkuId(shopName, v.getThirdPlatformSkuId())
                         .isPresent())
                 .count();
+        final long boundBefore = boundCount;
         if (boundCount >= variants.size()) {
             finishCatalogPublishSeed(shopName, productId);
             return;
         }
-        if (StringUtils.isBlank(detailUrl) || !tangbuyMallClient.isConfigured()) {
+        String resolvedOfferId = StringUtils.trimToNull(offerId);
+        if (resolvedOfferId == null) {
+            resolvedOfferId = resolveOfferIdFromPublishBindings(shopName, productId);
+        }
+        String resolvedImage = image;
+        BigDecimal resolvedPrice = price;
+        String resolvedDetailUrl = StringUtils.trimToNull(detailUrl);
+        if (catalog != null) {
+            if (resolvedImage == null) {
+                resolvedImage = catalog.getImageUrl();
+            }
+            if (resolvedPrice == null) {
+                resolvedPrice = catalog.getPrice();
+            }
+            if (resolvedDetailUrl == null) {
+                resolvedDetailUrl = firstNonBlank(catalog.getTangbuyUrl(), catalog.getUrl1688());
+            }
+            if (resolvedOfferId == null) {
+                resolvedOfferId = firstNonBlank(catalog.getOfferId1688(), catalog.getTangbuyProductId(),
+                        catalog.getCandidateId());
+            }
+        }
+        if (resolvedDetailUrl == null) {
+            resolvedDetailUrl = resolveDetailUrlFromPublishRecord(shopName, productId);
+        }
+
+        // Catalog publish writes Tangbuy skuId into Shopify variant.sku — no itemGet required.
+        linkVariantsFromPublishedShopifySku(shopName, productId, variants, resolvedOfferId,
+                resolvedImage, resolvedPrice, resolvedDetailUrl);
+        boundCount = countBoundVariants(shopName, variants);
+        if (boundCount >= variants.size()) {
+            finishCatalogPublishSeed(shopName, productId);
+            log.info("Publish variant repair (shopify sku) shop={} product={} variants={}",
+                    shopName, productId, variants.size());
+            return;
+        }
+
+        if (StringUtils.isBlank(resolvedDetailUrl) || !tangbuyMallClient.isConfigured()) {
             finishCatalogPublishSeed(shopName, productId);
             return;
         }
         JSONArray itemSkus;
         try {
-            itemSkus = tangbuyMallClient.itemGetProductSkus(detailUrl);
+            itemSkus = tangbuyMallClient.itemGetProductSkus(resolvedDetailUrl);
         } catch (Exception e) {
             log.warn("Publish variant repair itemGet failed shop={} product={}: {}",
                     shopName, productId, e.getMessage());
@@ -315,7 +353,8 @@ public class CatalogPublishLinkService {
             finishCatalogPublishSeed(shopName, productId);
             return;
         }
-        linkVariantsByShopifySkuField(shopName, productId, variants, matrix, offerId, image, price, detailUrl);
+        linkVariantsByShopifySkuField(shopName, productId, variants, matrix, resolvedOfferId,
+                resolvedImage, resolvedPrice, resolvedDetailUrl);
         List<VariantAlignment> alignments = SkuMatcher.align(variants, matrix);
         for (VariantAlignment a : alignments) {
             if (!a.matched() || StringUtils.isBlank(a.skuId())) {
@@ -324,11 +363,63 @@ public class CatalogPublishLinkService {
             if (shopProductBindingRepository.findBindableBySkuId(shopName, a.variantGid()).isPresent()) {
                 continue;
             }
-            link(shopName, productId, a.variantGid(), offerId, a.skuId(), image, price, detailUrl);
+            link(shopName, productId, a.variantGid(), resolvedOfferId, a.skuId(),
+                    resolvedImage, resolvedPrice, resolvedDetailUrl);
         }
         finishCatalogPublishSeed(shopName, productId);
         log.info("Publish variant repair shop={} product={} variants={} boundBefore={}",
-                shopName, productId, variants.size(), boundCount);
+                shopName, productId, variants.size(), boundBefore);
+    }
+
+    private long countBoundVariants(String shopName, List<ThirdPlatformSku> variants) {
+        return variants.stream()
+                .filter(v -> shopProductBindingRepository
+                        .findBindableBySkuId(shopName, v.getThirdPlatformSkuId())
+                        .isPresent())
+                .count();
+    }
+
+    private String resolveOfferIdFromPublishBindings(String shopName, String productId) {
+        for (ShopProductBinding b : shopProductBindingRepository.listBindableByShop(shopName)) {
+            if (!productId.equals(b.getThirdPlatformItemId())) {
+                continue;
+            }
+            if (!BIND_SOURCE_FROM_PUBLISH.equalsIgnoreCase(StringUtils.trimToEmpty(b.getBindSource()))) {
+                continue;
+            }
+            if (StringUtils.isNotBlank(b.getTangbuyProductId())) {
+                return b.getTangbuyProductId().trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Use Shopify mirror sku (= Tangbuy skuId at catalog publish) when itemGet is unavailable.
+     */
+    private void linkVariantsFromPublishedShopifySku(String shopName,
+                                                     String productId,
+                                                     List<ThirdPlatformSku> variants,
+                                                     String offerId,
+                                                     String image,
+                                                     BigDecimal price,
+                                                     String detailUrl) {
+        if (StringUtils.isBlank(offerId)) {
+            return;
+        }
+        for (ThirdPlatformSku variant : variants) {
+            if (shopProductBindingRepository
+                    .findBindableBySkuId(shopName, variant.getThirdPlatformSkuId())
+                    .isPresent()) {
+                continue;
+            }
+            String shopSku = StringUtils.trimToNull(variant.getSku());
+            if (shopSku == null) {
+                continue;
+            }
+            link(shopName, productId, variant.getThirdPlatformSkuId(),
+                    offerId, shopSku, image, price, detailUrl);
+        }
     }
 
     /**
