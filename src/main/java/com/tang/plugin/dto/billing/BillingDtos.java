@@ -189,6 +189,9 @@ public final class BillingDtos {
             String refId,
             String endpoint,
             String remark,
+            String idempotencyKey,
+            String bucket,
+            Integer upstreamCredits,
             java.time.Instant createdAt
     ) {}
 
@@ -217,6 +220,62 @@ public final class BillingDtos {
             int limit,
             int offset
     ) {}
+
+    // ===== 商业化（运营中心三档 + 欢迎分 + 桶拆分） =====
+
+    /**
+     * 营销调用扣费结果（§4.3）。
+     *
+     * @param upstreamCredits 上游实际消耗 U（pipispy consumed_credits）
+     * @param chargedCredits  向用户实扣 = U × 2
+     * @param bucket          主扣减桶（welcome/promo/subscription/credit_pack）
+     * @param balanceAfter    扣费后余额
+     * @param transactionId   流水 ID
+     */
+    public record MarketingChargeResult(
+            Long userId,
+            int upstreamCredits,
+            int chargedCredits,
+            String bucket,
+            Integer balanceAfter,
+            Long transactionId
+    ) {}
+
+    /** 欢迎分领取结果（§4.2）。 */
+    public record WelcomeClaimResponse(
+            boolean claimed,
+            boolean alreadyClaimed,
+            Integer granted,
+            Integer balanceAfter
+    ) {}
+
+    /**
+     * 双桶拆分（§4.5）：免费分 vs 付费分（月订+加购+促销）。
+     * 顶栏 / UsageCard 共用此结构。
+     */
+    public record CreditBucketBreakdown(
+            Long userId,
+            Integer balanceCredits,
+            Integer freeCredits,
+            Integer paidCredits,
+            Integer subscriptionCredits,
+            Integer packCredits,
+            Integer promoCredits
+    ) {}
+
+    /** 商品目录项（§3）。前端 BillingDrawer 渲染。 */
+    public record CatalogItem(
+            String code,
+            String kind,           // subscription / credit_pack
+            String name,
+            Long priceUsdCents,
+            Integer creditsNormal,
+            Integer creditsPromo,
+            boolean promoActive,
+            Integer durationDays
+    ) {}
+
+    public record CatalogResponse(java.util.List<CatalogItem> plans, java.util.List<CatalogItem> packages) {}
 
     // ===== Payment Orders (P3.5 — expose list/detail) =====
 

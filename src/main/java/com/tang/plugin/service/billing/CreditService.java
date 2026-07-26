@@ -281,6 +281,7 @@ public class CreditService {
                         t.getId(), t.getType(), t.getAmount(),
                         t.getBalanceBefore(), t.getBalanceAfter(),
                         t.getRefType(), t.getRefId(), t.getEndpoint(), t.getRemark(),
+                        t.getIdempotencyKey(), t.getBucket(), t.getUpstreamCredits(),
                         t.getCreatedAt()))
                 .collect(Collectors.toList());
         return new CreditTransactionListResponse(items, total, limit, offset);

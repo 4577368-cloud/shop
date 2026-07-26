@@ -99,12 +99,15 @@ public class CreditLotRepository {
     }
 
     /**
-     * 取出可消耗的批次（未过期且有剩余），按 created_at ASC 顺序（FIFO 消耗）。
+     * 取出可消耗的批次（未过期且有剩余），按「桶优先级 → 桶内 expires_at ASC → created_at ASC」顺序消耗。
+     *
+     * <p>桶优先级（§4.1）：welcome(免费)=0 → promo(促销)=1 → subscription(月订)=2 → credit_pack(加购)=3。
+     * 免费分优先花完，其次促销，其次月订，最后加购。
      *
      * <p>只读查询；扣减在事务内通过 {@link #consumeFromLot} 单条 UPDATE 完成。
      *
      * @param userId 用户 ID
-     * @return 按 FIFO 排序的可消耗批次列表
+     * @return 按优先级 FIFO 排序的可消耗批次列表
      */
     public List<CreditLot> listConsumable(Long userId) {
         return jdbcTemplate.query(
@@ -115,7 +118,19 @@ public class CreditLotRepository {
                 WHERE user_id = ?
                   AND amount_granted - amount_consumed - amount_expired > 0
                   AND (expires_at IS NULL OR expires_at > ?)
-                ORDER BY created_at ASC, id ASC
+                ORDER BY
+                  CASE source_type
+                    WHEN 'welcome' THEN 0
+                    WHEN 'promo' THEN 1
+                    WHEN 'sub_starter' THEN 2
+                    WHEN 'sub_growth' THEN 2
+                    WHEN 'subscription' THEN 2
+                    WHEN 'pack_boost' THEN 3
+                    WHEN 'credit_pack' THEN 3
+                    ELSE 3
+                  END ASC,
+                  expires_at ASC,
+                  created_at ASC, id ASC
                 """,
                 ROW_MAPPER,
                 userId, Timestamp.from(Instant.now()));

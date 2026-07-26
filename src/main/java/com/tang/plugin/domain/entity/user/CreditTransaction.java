@@ -32,5 +32,15 @@ public class CreditTransaction {
     private String remark;
     /** 幂等键（如 marketing_api 的 cacheKey），用于防止重复扣费。 */
     private String idempotencyKey;
+    /**
+     * 扣减桶（§4.1）：welcome(免费) / promo(促销) / subscription(月订) / credit_pack(加购) / manual。
+     * 一条扣费流水可能因跨桶而只记主桶；跨桶拆分见 {@code credit_transaction_buckets}（一期简化为单桶优先）。
+     */
+    private String bucket;
+    /**
+     * 上游实际消耗 U（pipispy {@code consumed_credits}）。用户实扣 = U × 2。
+     * 仅 marketing_api 消耗写入；发放/过期为 NULL。
+     */
+    private Integer upstreamCredits;
     private Instant createdAt;
 }
