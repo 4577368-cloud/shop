@@ -141,7 +141,8 @@ public final class BillingDtos {
             Integer amount,
             String refType,
             String refId,
-            String remark
+            String remark,
+            String idempotencyKey
     ) {}
 
     /** 积分消耗结果。 */

@@ -30,5 +30,7 @@ public class CreditTransaction {
     private String endpoint;
     /** 备注（最多 255 字符）。 */
     private String remark;
+    /** 幂等键（如 marketing_api 的 cacheKey），用于防止重复扣费。 */
+    private String idempotencyKey;
     private Instant createdAt;
 }

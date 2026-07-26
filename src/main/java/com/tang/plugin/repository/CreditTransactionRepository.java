@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.apache.commons.lang3.StringUtils;
 
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
@@ -29,7 +30,8 @@ public class CreditTransactionRepository {
                 .setRefType(rs.getString("ref_type"))
                 .setRefId(rs.getString("ref_id"))
                 .setEndpoint(rs.getString("endpoint"))
-                .setRemark(rs.getString("remark"));
+                .setRemark(rs.getString("remark"))
+                .setIdempotencyKey(rs.getString("idempotency_key"));
         Timestamp created = rs.getTimestamp("created_at");
         t.setCreatedAt(created != null ? created.toInstant() : null);
         return t;
@@ -41,8 +43,8 @@ public class CreditTransactionRepository {
     public CreditTransaction insert(CreditTransaction txn) {
         String sql = """
                 INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after,
-                                                 ref_type, ref_id, endpoint, remark, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                 ref_type, ref_id, endpoint, remark, idempotency_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         KeyHolder keyHolder = new GeneratedKeyHolder();
         Instant now = txn.getCreatedAt() != null ? txn.getCreatedAt() : Instant.now();
@@ -57,7 +59,8 @@ public class CreditTransactionRepository {
             ps.setString(7, txn.getRefId());
             ps.setString(8, txn.getEndpoint());
             ps.setString(9, txn.getRemark());
-            ps.setTimestamp(10, Timestamp.from(now));
+            ps.setString(10, txn.getIdempotencyKey());
+            ps.setTimestamp(11, Timestamp.from(now));
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -66,6 +69,28 @@ public class CreditTransactionRepository {
         }
         txn.setCreatedAt(now);
         return txn;
+    }
+
+    /**
+     * 按幂等键查询已存在的消耗记录。用于防止重复扣费。
+     */
+    public CreditTransaction findByIdempotencyKey(Long userId, String idempotencyKey) {
+        if (StringUtils.isBlank(idempotencyKey)) {
+            return null;
+        }
+        try {
+            return jdbcTemplate.queryForObject(
+                    """
+                    SELECT id, user_id, type, amount, balance_before, balance_after,
+                           ref_type, ref_id, endpoint, remark, idempotency_key, created_at
+                    FROM credit_transactions
+                    WHERE user_id = ? AND idempotency_key = ?
+                    LIMIT 1
+                    """,
+                    ROW_MAPPER, userId, idempotencyKey);
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            return null;
+        }
     }
 
     /**
