@@ -22,8 +22,8 @@ import java.util.Set;
  */
 public final class SkuMatcher {
 
-    /** Minimum overlap score to accept an automatic per-variant binding. */
-    public static final double ACCEPT_SCORE = 0.5d;
+    /** Minimum overlap score to accept an automatic per-variant binding (aligned with frontend strictness). */
+    public static final double ACCEPT_SCORE = 0.65d;
 
     private SkuMatcher() {
     }
@@ -47,7 +47,7 @@ public final class SkuMatcher {
             matrixValues.addAll(skuTokens(sku));
         }
         for (String opt : optionTokens) {
-            if (!hitsAny(opt, matrixValues)) {
+            if (!SkuTokenAliases.hitsAnyExpanded(opt, matrixValues)) {
                 return true;
             }
         }
@@ -84,9 +84,9 @@ public final class SkuMatcher {
                 best = sku;
             }
         }
-        // A lone SKU is the only possible target: bind it even when the labels don't textually overlap.
-        boolean matched = singleSku || bestScore >= ACCEPT_SCORE;
-        double score = singleSku ? Math.max(bestScore, optionTokens.isEmpty() ? 1d : bestScore) : bestScore;
+        // Single-SKU offers still require token overlap unless the variant has no option tokens.
+        boolean matched = (singleSku && optionTokens.isEmpty()) || bestScore >= ACCEPT_SCORE;
+        double score = bestScore;
         if (!matched || best == null) {
             return new VariantAlignment(variantGid, optionLabel, null, null, Math.max(bestScore, 0d), false);
         }
@@ -100,7 +100,7 @@ public final class SkuMatcher {
         }
         int hits = 0;
         for (String opt : optionTokens) {
-            if (hitsAny(opt, skuTokens)) {
+            if (SkuTokenAliases.hitsAnyExpanded(opt, skuTokens)) {
                 hits++;
             }
         }

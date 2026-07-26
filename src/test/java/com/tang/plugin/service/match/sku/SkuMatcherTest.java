@@ -60,17 +60,38 @@ class SkuMatcherTest {
     }
 
     @Test
-    void singleSku_mapsAllVariants() {
+    void singleSku_mapsWhenNoOptionTokens() {
         List<ThirdPlatformSku> variants = List.of(
-                variant("v1", "Whatever", null),
-                variant("v2", "Nomatch", null));
+                variant("v1", "", null),
+                variant("v2", "", null));
         List<OfferSkuVO> skus = List.of(sku("only", "标准"));
 
         List<VariantAlignment> out = SkuMatcher.align(variants, skus);
         assertTrue(out.get(0).matched());
         assertEquals("only", out.get(0).skuId());
         assertTrue(out.get(1).matched());
-        assertEquals("only", out.get(1).skuId());
+    }
+
+    @Test
+    void singleSku_mismatchedLabels_leftUnmatched() {
+        List<ThirdPlatformSku> variants = List.of(
+                variant("v1", "Whatever", null),
+                variant("v2", "Nomatch", null));
+        List<OfferSkuVO> skus = List.of(sku("only", "标准"));
+
+        List<VariantAlignment> out = SkuMatcher.align(variants, skus);
+        assertFalse(out.get(0).matched());
+        assertFalse(out.get(1).matched());
+    }
+
+    @Test
+    void colorAlias_wineRed() {
+        List<ThirdPlatformSku> variants = List.of(variant("v", "酒红", "M"));
+        List<OfferSkuVO> skus = List.of(sku("s-wine", "Wine Red", "M"));
+
+        VariantAlignment a = SkuMatcher.align(variants, skus).get(0);
+        assertTrue(a.matched());
+        assertEquals("s-wine", a.skuId());
     }
 
     @Test

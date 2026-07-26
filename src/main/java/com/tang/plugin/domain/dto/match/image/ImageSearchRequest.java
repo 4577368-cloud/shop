@@ -14,4 +14,9 @@ public class ImageSearchRequest {
     private Integer limit;
     /** Optional short subject word for image+text correction; reserved, unused by frontend in A3-1. */
     private String query;
+    /**
+     * When set, search 1688 with this publicly reachable image (e.g. Shopify variant image)
+     * instead of the product primary / catalog original tier.
+     */
+    private String searchImageUrl;
 }

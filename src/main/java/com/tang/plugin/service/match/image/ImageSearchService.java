@@ -69,10 +69,22 @@ public class ImageSearchService {
      * @param limit               candidates to fetch (null/&lt;=0 → client default)
      */
     public ImageSearchResultVO searchByShopProduct(String shopName, String thirdPlatformItemId, Integer limit) {
+        return searchByShopProduct(shopName, thirdPlatformItemId, limit, null);
+    }
+
+    /**
+     * @param searchImageUrlOverride optional variant / representative image instead of product primary
+     */
+    public ImageSearchResultVO searchByShopProduct(String shopName, String thirdPlatformItemId, Integer limit,
+                                                   String searchImageUrlOverride) {
         if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) {
             throw new CustomException("image search requires shopName and thirdPlatformItemId");
         }
         ThirdPlatformProduct product = findMirrorProduct(shopName, thirdPlatformItemId);
+
+        if (StringUtils.isNotBlank(searchImageUrlOverride)) {
+            return searchUsingShopifyImagePath(product, searchImageUrlOverride.trim(), limit);
+        }
 
         // Tier 1: original source image (no query, no LLM). Catalog images are alicdn-hosted.
         String originalImage = searchImageResolver.resolveOriginalImageUrl(shopName, thirdPlatformItemId);
@@ -86,6 +98,11 @@ public class ImageSearchService {
         if (StringUtils.isBlank(shopifyImage)) {
             throw new CustomException(ERR_NO_PRIMARY_IMAGE + ": 该商品无主图，无法进行 1688 图搜");
         }
+        return searchUsingShopifyImagePath(product, shopifyImage, limit);
+    }
+
+    private ImageSearchResultVO searchUsingShopifyImagePath(ThirdPlatformProduct product, String shopifyImage,
+                                                            Integer limit) {
         SearchToken token = resolveToken(shopifyImage);
 
         // Tier 2: title query, when usable.
