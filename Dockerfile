@@ -9,7 +9,10 @@ FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 RUN mkdir -p /app/data
 COPY --from=build /app/target/tangbuy-plugin-*.jar /app/app.jar
-ENV JAVA_OPTS=""
+# Render Starter ≈ 512Mi。默认 JVM 不限制 Metaspace / CodeCache / 线程栈，
+# RSS 容易冲过上限被 OOMKill（exit 137）。SerialGC 降低小容器常驻内存。
+# Dashboard 若覆盖 JAVA_OPTS，请保留同等或更严的上限。
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=45.0 -XX:InitialRAMPercentage=20.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss256k -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
 EXPOSE 8088
 # Render injects PORT; Spring reads server.port=${PORT:8088}
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

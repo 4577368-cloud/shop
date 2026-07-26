@@ -16,8 +16,9 @@ services:
     dockerfilePath: ./Dockerfile
     envVars:
       # Render also injects PORT automatically; keep Spring aligned
+      # 与 Dockerfile 默认一致；Starter 512Mi 下必须限制堆外内存，否则易 OOMKill
       - key: JAVA_OPTS
-        value: "-XX:MaxRAMPercentage=60.0 -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+        value: "-XX:MaxRAMPercentage=45.0 -XX:InitialRAMPercentage=20.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss256k -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
       # Activate the persistent PostgreSQL + internal-auth profile
       - key: SPRING_PROFILES_ACTIVE
         value: "prod"
