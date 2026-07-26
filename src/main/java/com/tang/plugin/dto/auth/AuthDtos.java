@@ -29,7 +29,7 @@ public final class AuthDtos {
 
     public record AuthResponse(UserResponse user) {}
 
-    public record RefreshResponse(String accessToken) {}
+    public record RefreshResponse(String accessToken, String refreshToken) {}
 
     // ===== Forgot / Reset password (P6) =====
 

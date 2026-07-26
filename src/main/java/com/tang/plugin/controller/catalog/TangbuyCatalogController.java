@@ -6,8 +6,11 @@ import com.tang.plugin.domain.entity.pricing.PricingTemplate;
 import com.tang.plugin.service.catalog.TangbuyCatalogService;
 import com.tang.plugin.service.pricing.PriceCalculator;
 import com.tang.plugin.service.pricing.PricingTemplateService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -33,12 +36,18 @@ public class TangbuyCatalogController {
     private PricingTemplateService pricingTemplateService;
     @Resource
     private PriceCalculator priceCalculator;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/recommendations")
     public List<CatalogRecommendationItem> recommendations(
+            HttpServletRequest request,
             @RequestParam(value = "shopName", required = false) String shopName,
             @RequestParam(value = "offset", required = false) Integer offset,
             @RequestParam(value = "limit", required = false) Integer limit) {
+        if (StringUtils.isNotBlank(shopName)) {
+            shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
+        }
         PricingTemplate template = pricingTemplateService.getEffective(shopName);
         return tangbuyCatalogService.list(offset, limit).stream()
                 .map(p -> toItem(p, template))

@@ -249,6 +249,30 @@ public class TangbuyMallClient {
         }
         JSONObject data = root.getJSONObject("data");
         JSONObject item = data == null ? null : data.getJSONObject("item");
+
+        // === DIAGNOSTIC: log itemGet item keys + description-like fields (one-shot audit) ===
+        if (item != null) {
+            try {
+                log.warn("[itemGet-DIAG] item.keys = {}", item.keySet());
+                for (String key : new String[]{"description", "descriptionHtml", "desc", "detail",
+                        "descHtml", "detailHtml", "content", "richText", "bodyHtml", "html"}) {
+                    String val = item.getString(key);
+                    if (StringUtils.isNotBlank(val)) {
+                        log.warn("[itemGet-DIAG] item.{} (len={}, preview={})",
+                                key, val.length(),
+                                val.length() > 300 ? val.substring(0, 300) + "..." : val);
+                    }
+                }
+                JSONObject descObj = item.getJSONObject("description");
+                if (descObj != null) {
+                    log.warn("[itemGet-DIAG] item.description (object) keys = {}", descObj.keySet());
+                }
+            } catch (Exception diagEx) {
+                log.warn("[itemGet-DIAG] diagnostic failed", diagEx);
+            }
+        }
+        // === /DIAGNOSTIC ===
+
         JSONArray skus = item == null ? null : item.getJSONArray("productSkus");
         return skus == null ? new JSONArray() : skus;
     }

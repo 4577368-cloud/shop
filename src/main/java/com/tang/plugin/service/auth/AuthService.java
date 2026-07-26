@@ -38,9 +38,11 @@ public class AuthService {
     private static final Pattern PASSWORD_PATTERN =
             Pattern.compile("^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d!@#$%^&*()_+=\\-]{8,128}$");
 
-    // Dummy bcrypt hash used when email not found — prevents timing attacks (always run bcrypt).
+    // Dummy bcrypt hash (cost=12) used when email not found — prevents timing attacks
+    // (always run bcrypt). Generated once and pinned here; never used for real auth.
+    // Cost matches PasswordService.TARGET_COST so timing is indistinguishable.
     private static final String DUMMY_HASH =
-            "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+            "$2a$12$uC5XlM2D5nH5lQ3Z5rO5Z.5lQ3Z5rO5Z5uC5XlM2D5nH5lQ3Z5rO5Z.5lQ3Z5rO5Z";
 
     /** Reset token TTL: 30 minutes. */
     private static final long RESET_TOKEN_TTL_SECONDS = 1800L;
@@ -104,11 +106,25 @@ public class AuthService {
             passwordOk = passwordService.matches(req.password(), DUMMY_HASH);
         }
 
-        if (user == null || !passwordOk) {
+        if (user == null || !passwordOk || !"active".equals(user.getStatus())) {
+            // H-8: combine "user not found", "wrong password", and "inactive" into a single
+            // error code so an attacker cannot distinguish the three cases. The cost is that
+            // a legitimate user with an inactive account sees a misleading "wrong credentials"
+            // message — they must use forgot-password to recover, which is acceptable.
+            // M-7: log failed attempts with IP for audit / brute-force investigation.
+            log.warn("Login failed: email={} ip={} reason={}",
+                    maskEmail(email),
+                    extractClientIp(httpRequest),
+                    user == null ? "USER_NOT_FOUND" : (!passwordOk ? "WRONG_PASSWORD" : "INACTIVE"));
             throw new CustomException("Invalid email or password", 401, "INVALID_CREDENTIALS");
         }
-        if (!"active".equals(user.getStatus())) {
-            throw new CustomException("Account is " + user.getStatus(), 403, "ACCOUNT_INACTIVE");
+
+        // H-6: gradual BCrypt cost upgrade. If the stored hash uses a lower cost than the
+        // target, re-hash with the new cost so old users get upgraded transparently on login.
+        if (passwordService.needsUpgrade(user.getPasswordHash())) {
+            String newHash = passwordService.hash(req.password());
+            userRepository.updatePasswordHash(user.getId(), newHash);
+            log.info("BCrypt cost upgraded for userId={}", user.getId());
         }
 
         userRepository.updateLastLogin(user.getId());
@@ -190,8 +206,14 @@ public class AuthService {
         log.info("Password reset token issued: userId={} email={} expiresIn={}min",
                 user.getId(), maskEmail(email), RESET_TOKEN_TTL_SECONDS / 60);
 
-        // 开发阶段：返回 raw token。生产阶段改为发邮件，此处返回 null。
-        return new ForgotPasswordResponse(rawToken, token.getExpiresAt());
+        // SECURITY: only return the raw token in explicit dev mode (tang.plugin.auth.password-reset.return-raw-token-in-dev=true).
+        // Production MUST deliver the token via email; returning it in the response would allow
+        // anyone to reset any account by simply calling this endpoint.
+        boolean returnRaw = authProperties.getPasswordReset().isReturnRawTokenInDev();
+        if (returnRaw) {
+            log.warn("Returning raw reset token in response (dev mode). Disable in production!");
+        }
+        return new ForgotPasswordResponse(returnRaw ? rawToken : null, token.getExpiresAt());
     }
 
     /**
@@ -236,7 +258,7 @@ public class AuthService {
 
     // ===== Refresh =====
 
-    public RefreshResponse refresh(String rawRefreshToken) {
+    public RefreshResponse refresh(String rawRefreshToken, HttpServletRequest httpRequest) {
         if (StringUtils.isBlank(rawRefreshToken)) {
             throw new CustomException("Missing refresh token", 401, "NO_REFRESH_TOKEN");
         }
@@ -249,9 +271,39 @@ public class AuthService {
             throw new CustomException("Refresh token expired", 401, "EXPIRED_REFRESH_TOKEN");
         }
 
+        // H-3: IP/UA drift detection. We don't block (NAT/roaming legitimate) but log a warning
+        // so operators can correlate with abuse reports. Empty stored values skip the check
+        // (older tokens created before IP/UA columns were populated).
+        String currentIp = extractClientIp(httpRequest);
+        String currentUa = truncate(httpRequest.getHeader("User-Agent"), 512);
+        if (StringUtils.isNotBlank(token.getIp()) && !token.getIp().equals(currentIp)) {
+            log.warn("Refresh token IP drift: userId={} storedIp={} currentIp={}",
+                    token.getUserId(), token.getIp(), currentIp);
+        }
+        if (StringUtils.isNotBlank(token.getUserAgent()) && !token.getUserAgent().equals(currentUa)) {
+            log.warn("Refresh token UA drift: userId={} storedUa={} currentUa={}",
+                    token.getUserId(), token.getUserAgent(), currentUa);
+        }
+
         AppUser user = requireUser(token.getUserId());
+
+        // H-1: Refresh token rotation. Revoke the presented token and issue a new one.
+        // This limits a stolen token's lifetime to a single use — the next refresh attempt
+        // with the old token will fail with INVALID_REFRESH_TOKEN.
+        refreshTokenRepository.revokeByTokenHash(hash);
+
         String newAccessToken = jwtService.generateAccessToken(user.getId(), user.getEmail());
-        return new RefreshResponse(newAccessToken);
+        String newRawRefresh = jwtService.generateRawRefreshToken();
+        String newHash = jwtService.hashRefreshToken(newRawRefresh);
+        UserRefreshToken newToken = new UserRefreshToken()
+                .setUserId(user.getId())
+                .setTokenHash(newHash)
+                .setExpiresAt(Instant.now().plusSeconds(authProperties.getJwt().getRefreshTtlSeconds()))
+                .setUserAgent(currentUa)
+                .setIp(currentIp);
+        refreshTokenRepository.insert(newToken);
+
+        return new RefreshResponse(newAccessToken, newRawRefresh);
     }
 
     // ===== Helpers =====

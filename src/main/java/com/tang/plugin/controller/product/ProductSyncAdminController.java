@@ -8,7 +8,9 @@ import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.service.product.ProductSyncService;
 import com.tang.plugin.service.product.ShopProductQueryService;
 import com.tang.plugin.service.product.ShopProductWriteService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,14 +44,18 @@ public class ProductSyncAdminController {
     private ShopProductQueryService shopProductQueryService;
     @Resource
     private ShopProductWriteService shopProductWriteService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     /**
      * Trigger a one-shot product pull from Shopify into the mirror.
      * {@code windowMinutes > 0} pulls incrementally (updated_at >= now - window); omit for a full pull.
      */
     @PostMapping("/sync")
-    public Map<String, Object> sync(@RequestParam String shopName,
+    public Map<String, Object> sync(HttpServletRequest request,
+                                    @RequestParam String shopName,
                                     @RequestParam(required = false) Integer windowMinutes) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("sync requires shopName");
         }
@@ -72,7 +78,9 @@ public class ProductSyncAdminController {
      * List the mirrored SPU rows for a shop (read-only visibility of what sync persisted).
      */
     @GetMapping("/list")
-    public List<ThirdPlatformProduct> list(@RequestParam String shopName) {
+    public List<ThirdPlatformProduct> list(HttpServletRequest request,
+                                           @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return thirdPlatformProductRepository.listByShop(shopName);
     }
 
@@ -80,8 +88,10 @@ public class ProductSyncAdminController {
      * Phase 1 read-only detail: SPU + variants + media from the local mirror.
      */
     @GetMapping("/detail")
-    public ShopProductDetailVO detail(@RequestParam String shopName,
+    public ShopProductDetailVO detail(HttpServletRequest request,
+                                      @RequestParam String shopName,
                                       @RequestParam String itemId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return shopProductQueryService.getDetail(shopName, itemId);
     }
 
@@ -91,8 +101,10 @@ public class ProductSyncAdminController {
      * and Phase 4 {@code variants[]} for multi-variant price / inventory.
      */
     @PutMapping("/detail")
-    public ShopProductDetailVO update(@RequestParam String shopName,
+    public ShopProductDetailVO update(HttpServletRequest request,
+                                      @RequestParam String shopName,
                                       @RequestBody ShopProductUpdateRequest body) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return shopProductWriteService.update(shopName, body);
     }
 }

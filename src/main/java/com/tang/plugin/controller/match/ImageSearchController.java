@@ -8,7 +8,9 @@ import com.tang.plugin.service.match.image.ImageBindingSnapshotBackfillService;
 import com.tang.plugin.service.match.image.ImageBindingSnapshotBackfillService.BackfillResult;
 import com.tang.plugin.service.match.image.ImageMatchConfirmService;
 import com.tang.plugin.service.match.image.ImageSearchService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,9 +46,13 @@ public class ImageSearchController {
     private ImageMatchConfirmService imageMatchConfirmService;
     @Resource
     private ImageBindingSnapshotBackfillService imageBindingSnapshotBackfillService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/image-search")
-    public ImageSearchResultVO imageSearch(@RequestBody ImageSearchRequest request) {
+    public ImageSearchResultVO imageSearch(HttpServletRequest httpRequest,
+                                          @RequestBody ImageSearchRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return imageSearchService.searchByShopProduct(
                 request.getShopName(),
                 request.getThirdPlatformItemId(),
@@ -55,24 +61,32 @@ public class ImageSearchController {
     }
 
     @PostMapping("/image-search/confirm")
-    public ImageBindingView confirm(@RequestBody ConfirmImageMatchDTO request) {
+    public ImageBindingView confirm(HttpServletRequest httpRequest,
+                                    @RequestBody ConfirmImageMatchDTO request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return imageMatchConfirmService.confirm(request);
     }
 
     @GetMapping("/image-search/bindings")
-    public List<ImageBindingView> bindings(@RequestParam String shopName) {
+    public List<ImageBindingView> bindings(HttpServletRequest request,
+                                           @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return imageMatchConfirmService.listActiveBindings(shopName);
     }
 
     /** "确认无误": promote a product's PENDING (AI-suggested) image binding to ACTIVE. */
     @PostMapping("/image-search/ack")
-    public void ack(@RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
+    public void ack(HttpServletRequest request,
+                   @RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         imageMatchConfirmService.acknowledge(shopName, thirdPlatformItemId);
     }
 
     /** "取消关联": soft-unbind a product's image binding (PENDING or ACTIVE). */
     @PostMapping("/image-search/unbind")
-    public void unbind(@RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
+    public void unbind(HttpServletRequest request,
+                       @RequestParam String shopName, @RequestParam String thirdPlatformItemId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         imageMatchConfirmService.unbind(shopName, thirdPlatformItemId);
     }
 
@@ -81,7 +95,9 @@ public class ImageSearchController {
      * match the bound offer → else derive from offer detail). One-shot, idempotent, fail-open.
      */
     @PostMapping("/image-search/backfill-snapshots")
-    public BackfillResult backfillSnapshots(@RequestParam String shopName) {
+    public BackfillResult backfillSnapshots(HttpServletRequest request,
+                                            @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return imageBindingSnapshotBackfillService.backfill(shopName);
     }
 }

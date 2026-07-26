@@ -130,7 +130,7 @@ public class PayPalClient {
                 throw new CustomException("PayPal create-order response missing id", 502, "PAYPAL_CREATE_FAILED");
             }
             String orderId = resp.get("id").asText();
-            log.info("PayPal order created: id={} amount={}cny customId={}", orderId, amountUsdCents, customId);
+            log.info("PayPal order created: id={} amount={}usdCents customId={}", orderId, amountUsdCents, customId);
             return orderId;
         } catch (RestClientResponseException e) {
             log.error("PayPal create-order failed: status={} body={}", e.getStatusCode(), e.getResponseBodyAsString());

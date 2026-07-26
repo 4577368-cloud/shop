@@ -2,7 +2,9 @@ package com.tang.plugin.controller.skualign;
 
 import com.tang.plugin.domain.dto.skualign.*;
 import com.tang.plugin.service.skualign.SkuAlignV1Service;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -15,45 +17,61 @@ public class SkuAlignV1Controller {
 
     @Resource
     private SkuAlignV1Service skuAlignV1Service;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/overview")
-    public SkuAlignOverviewVO overview(@RequestParam String shopName,
+    public SkuAlignOverviewVO overview(HttpServletRequest request,
+                                       @RequestParam String shopName,
                                        @RequestParam(required = false) String tab) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuAlignV1Service.overview(shopName, tab);
     }
 
     @GetMapping("/products/detail")
-    public SkuAlignProductDetailVO productDetail(@RequestParam String shopName,
+    public SkuAlignProductDetailVO productDetail(HttpServletRequest request,
+                                                 @RequestParam String shopName,
                                                  @RequestParam String productId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuAlignV1Service.productDetail(shopName, productId);
     }
 
     @PostMapping("/runs")
-    public SkuAlignRunAcceptedVO enqueueRun(@RequestBody SkuAlignRunRequestDTO body) {
+    public SkuAlignRunAcceptedVO enqueueRun(HttpServletRequest request,
+                                           @RequestBody SkuAlignRunRequestDTO body) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
         return skuAlignV1Service.enqueueRun(body);
     }
 
     /** Step 3 — silent page-enter refresh for stale unresolved products. */
     @PostMapping("/page-enter")
-    public SkuAlignRunAcceptedVO pageEnter(@RequestParam String shopName) {
+    public SkuAlignRunAcceptedVO pageEnter(HttpServletRequest request,
+                                          @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuAlignV1Service.triggerPageEnter(shopName);
     }
 
     /** Step 3 — card expand refresh for a single unresolved product. */
     @PostMapping("/products/expand")
-    public SkuAlignRunAcceptedVO cardExpand(@RequestParam String shopName,
+    public SkuAlignRunAcceptedVO cardExpand(HttpServletRequest request,
+                                            @RequestParam String shopName,
                                             @RequestParam String productId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuAlignV1Service.triggerCardExpand(shopName, productId);
     }
 
     @GetMapping("/runs/{runId}")
-    public SkuAlignRunStatusVO runStatus(@RequestParam String shopName,
-                                         @PathVariable long runId) {
+    public SkuAlignRunStatusVO runStatus(HttpServletRequest request,
+                                        @RequestParam String shopName,
+                                        @PathVariable long runId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuAlignV1Service.runStatus(shopName, runId);
     }
 
     @PostMapping("/confirm-suggestions")
-    public SkuAlignConfirmResultVO confirmSuggestions(@RequestBody SkuAlignConfirmSuggestionsDTO body) {
+    public SkuAlignConfirmResultVO confirmSuggestions(HttpServletRequest request,
+                                                     @RequestBody SkuAlignConfirmSuggestionsDTO body) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
         return skuAlignV1Service.confirmSuggestions(body);
     }
 
@@ -72,9 +90,11 @@ public class SkuAlignV1Controller {
     }
 
     @PostMapping("/products/supplement-source")
-    public SkuAlignRunAcceptedVO supplementSource(@RequestParam String shopName,
+    public SkuAlignRunAcceptedVO supplementSource(HttpServletRequest request,
+                                                  @RequestParam String shopName,
                                                   @RequestParam String productId,
                                                   @RequestBody SkuAlignSupplementSourceDTO body) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         body.setShopName(shopName);
         return skuAlignV1Service.addSupplementSource(productId, body);
     }

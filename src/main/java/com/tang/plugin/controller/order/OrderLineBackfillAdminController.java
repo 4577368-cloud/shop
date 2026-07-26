@@ -2,7 +2,9 @@ package com.tang.plugin.controller.order;
 
 import com.tang.plugin.domain.dto.order.BindingBackfillResult;
 import com.tang.plugin.service.order.OrderLineBackfillService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,14 +22,20 @@ public class OrderLineBackfillAdminController {
 
     @Resource
     private OrderLineBackfillService orderLineBackfillService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/line")
-    public BindingBackfillResult backfillByLine(@RequestParam String shopName, @RequestParam String lineId) {
+    public BindingBackfillResult backfillByLine(HttpServletRequest request,
+                                                @RequestParam String shopName, @RequestParam String lineId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineBackfillService.backfillByLine(shopName, lineId);
     }
 
     @PostMapping("/variant")
-    public BindingBackfillResult backfillByVariant(@RequestParam String shopName, @RequestParam String variantGid) {
+    public BindingBackfillResult backfillByVariant(HttpServletRequest request,
+                                                  @RequestParam String shopName, @RequestParam String variantGid) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineBackfillService.backfillByVariant(shopName, variantGid);
     }
 }

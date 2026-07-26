@@ -5,7 +5,9 @@ import com.tang.plugin.domain.entity.procurement.ThirdPlatformProcurementTask;
 import com.tang.plugin.enums.procurement.ProcurementTaskStatus;
 import com.tang.plugin.service.procurement.ProcurementTaskQueryService;
 import com.tang.plugin.service.procurement.ProcurementTaskService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,9 +32,13 @@ public class ProcurementTaskAdminController {
     private ProcurementTaskService procurementTaskService;
     @Resource
     private ProcurementTaskQueryService procurementTaskQueryService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/create-from-line")
-    public Map<String, Object> createFromLine(@RequestParam String shopName, @RequestParam String lineId) {
+    public Map<String, Object> createFromLine(HttpServletRequest request,
+                                              @RequestParam String shopName, @RequestParam String lineId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         Long id = procurementTaskService.createFromOrderLine(shopName, lineId);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "OK");
@@ -41,13 +47,17 @@ public class ProcurementTaskAdminController {
     }
 
     @PostMapping("/create-from-order")
-    public ProcurementTaskCreateResult createFromOrder(@RequestParam String shopName,
+    public ProcurementTaskCreateResult createFromOrder(HttpServletRequest request,
+                                                       @RequestParam String shopName,
                                                        @RequestParam String outerOrderId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return procurementTaskService.createFromOrder(shopName, outerOrderId);
     }
 
     @PostMapping("/cancel")
-    public Map<String, Object> cancel(@RequestParam String shopName, @RequestParam String lineId) {
+    public Map<String, Object> cancel(HttpServletRequest request,
+                                       @RequestParam String shopName, @RequestParam String lineId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         procurementTaskService.cancelByLine(shopName, lineId);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "OK");
@@ -55,14 +65,18 @@ public class ProcurementTaskAdminController {
     }
 
     @GetMapping("/by-order")
-    public List<ThirdPlatformProcurementTask> listByOrder(@RequestParam String shopName,
+    public List<ThirdPlatformProcurementTask> listByOrder(HttpServletRequest request,
+                                                          @RequestParam String shopName,
                                                           @RequestParam String outerOrderId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return procurementTaskQueryService.listByOrder(shopName, outerOrderId);
     }
 
     @GetMapping("/by-status")
-    public List<ThirdPlatformProcurementTask> listByStatus(@RequestParam String shopName,
+    public List<ThirdPlatformProcurementTask> listByStatus(HttpServletRequest request,
+                                                           @RequestParam String shopName,
                                                            @RequestParam ProcurementTaskStatus status) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return procurementTaskQueryService.listByStatus(shopName, status);
     }
 }

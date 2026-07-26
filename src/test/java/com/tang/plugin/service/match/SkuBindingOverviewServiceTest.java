@@ -7,11 +7,15 @@ import com.tang.plugin.domain.entity.product.ThirdPlatformProduct;
 import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
 import com.tang.plugin.repository.ThirdPlatformProductRepository;
 import com.tang.plugin.repository.ThirdPlatformSkuRepository;
+import com.tang.plugin.domain.dto.match.sku.OfferDetailVO;
+import com.tang.plugin.domain.dto.match.sku.OfferSkuVO;
 import com.tang.plugin.service.match.image.ImageMatchConfirmService;
+import com.tang.plugin.service.match.sku.Crossborder1688ProductClient;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -21,6 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration tests for S1-a SKU overview (real repositories + H2). Locks: only bound products are
@@ -47,12 +54,20 @@ class SkuBindingOverviewServiceTest {
     @Resource
     private JdbcTemplate jdbcTemplate;
 
+    @MockBean
+    private Crossborder1688ProductClient crossborder1688ProductClient;
+
     @BeforeEach
     void clean() {
         jdbcTemplate.update("DELETE FROM shop_product_binding WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM shop_product_match_candidate WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM third_platform_sku WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM third_platform_product WHERE shop_name = ?", SHOP);
+
+        // Mock 1688 cross-border client so confirm() can validate SKU matrix without real credentials.
+        when(crossborder1688ProductClient.queryProductDetail(any(), any())).thenReturn(
+                new OfferDetailVO().setOfferId("777").setSkus(List.of(
+                        new OfferSkuVO().setSkuId("default-sku"))));
     }
 
     private void seedTwoVariantProduct() {

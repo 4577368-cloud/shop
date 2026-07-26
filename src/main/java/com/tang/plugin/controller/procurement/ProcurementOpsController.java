@@ -7,7 +7,9 @@ import com.tang.plugin.enums.procurement.ProcurementChainAnomaly;
 import com.tang.plugin.enums.procurement.ProcurementTaskDeliveryStatus;
 import com.tang.plugin.enums.procurement.ProcurementTaskStatus;
 import com.tang.plugin.service.procurement.ProcurementOpsQueryService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,38 +29,50 @@ public class ProcurementOpsController {
 
     @Resource
     private ProcurementOpsQueryService opsQueryService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/chain/by-task")
-    public ProcurementChainView chainByTask(@RequestParam String shopName, @RequestParam Long taskId) {
+    public ProcurementChainView chainByTask(HttpServletRequest request,
+                                            @RequestParam String shopName, @RequestParam Long taskId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return opsQueryService.chainByTask(shopName, taskId);
     }
 
     @GetMapping("/chain/by-line")
-    public ProcurementChainView chainByLine(@RequestParam String shopName, @RequestParam String lineId) {
+    public ProcurementChainView chainByLine(HttpServletRequest request,
+                                            @RequestParam String shopName, @RequestParam String lineId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return opsQueryService.chainByLine(shopName, lineId);
     }
 
     @GetMapping("/chain/by-shop")
-    public List<ProcurementChainView> chainByShop(@RequestParam String shopName,
+    public List<ProcurementChainView> chainByShop(HttpServletRequest request,
+                                                  @RequestParam String shopName,
                                                   @RequestParam(required = false) ProcurementTaskStatus taskStatus,
                                                   @RequestParam(required = false)
                                                   ProcurementTaskDeliveryStatus deliveryStatus,
                                                   @RequestParam(required = false) Integer limit) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return opsQueryService.chainByShop(shopName, taskStatus, deliveryStatus, limit);
     }
 
     @GetMapping("/anomalies")
-    public List<ProcurementAnomalyEntry> anomalies(@RequestParam String shopName,
+    public List<ProcurementAnomalyEntry> anomalies(HttpServletRequest request,
+                                                   @RequestParam String shopName,
                                                    @RequestParam(required = false) ProcurementChainAnomaly type,
                                                    @RequestParam(required = false) Long staleMinutes,
                                                    @RequestParam(required = false, defaultValue = "false")
                                                    boolean includeInfo,
                                                    @RequestParam(required = false) Integer limit) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return opsQueryService.anomalies(shopName, type, staleMinutes, includeInfo, limit);
     }
 
     @GetMapping("/summary")
-    public ProcurementChainSummary summary(@RequestParam String shopName) {
+    public ProcurementChainSummary summary(HttpServletRequest request,
+                                          @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return opsQueryService.summary(shopName);
     }
 }

@@ -46,6 +46,9 @@ public class JwtService {
 
     // ===== Access Token (JWT) =====
 
+    private static final String ISSUER = "tangbuy-plugin";
+    private static final String AUDIENCE = "tangbuy-frontend";
+
     /** Generate a signed JWT access token. */
     public String generateAccessToken(Long userId, String email) {
         Instant now = Instant.now();
@@ -53,13 +56,17 @@ public class JwtService {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("email", email)
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
+                .claim("typ", "access")
+                .id(java.util.UUID.randomUUID().toString())  // jti for uniqueness / future revocation
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(exp))
                 .signWith(accessKey)
                 .compact();
     }
 
-    /** Parse + verify a JWT access token. Returns userId, or throws if invalid/expired. */
+    /** Parse + verify a JWT access token. Returns userId, or returns null if invalid/expired. */
     public Long verifyAccessToken(String token) {
         if (StringUtils.isBlank(token)) {
             return null;
@@ -67,9 +74,16 @@ public class JwtService {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(accessKey)
+                    .requireIssuer(ISSUER)
+                    .requireAudience(AUDIENCE)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
+            // Reject tokens that aren't access tokens (defense in depth against typ confusion).
+            String typ = claims.get("typ", String.class);
+            if (!"access".equals(typ)) {
+                return null;
+            }
             return Long.parseLong(claims.getSubject());
         } catch (JwtException | IllegalArgumentException e) {
             return null;

@@ -3,7 +3,9 @@ package com.tang.plugin.controller.order;
 import com.tang.plugin.domain.dto.order.OrderBindingSummary;
 import com.tang.plugin.domain.entity.order.ThirdPlatformOrderLine;
 import com.tang.plugin.service.order.OrderLineBindingQueryService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,26 +25,36 @@ public class OrderLineBindingAdminController {
 
     @Resource
     private OrderLineBindingQueryService orderLineBindingQueryService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/lines")
-    public List<ThirdPlatformOrderLine> listByOrder(@RequestParam String shopName,
-                                                    @RequestParam String outerOrderId) {
+    public List<ThirdPlatformOrderLine> listByOrder(HttpServletRequest request,
+                                                   @RequestParam String shopName,
+                                                   @RequestParam String outerOrderId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineBindingQueryService.listByOrder(shopName, outerOrderId);
     }
 
     @GetMapping("/unbound")
-    public List<ThirdPlatformOrderLine> listUnbound(@RequestParam String shopName) {
+    public List<ThirdPlatformOrderLine> listUnbound(HttpServletRequest request,
+                                                   @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineBindingQueryService.listUnbound(shopName);
     }
 
     @GetMapping("/bound")
-    public List<ThirdPlatformOrderLine> listBound(@RequestParam String shopName) {
+    public List<ThirdPlatformOrderLine> listBound(HttpServletRequest request,
+                                                  @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineBindingQueryService.listBound(shopName);
     }
 
     @GetMapping("/count")
-    public OrderBindingSummary countByOrder(@RequestParam String shopName,
+    public OrderBindingSummary countByOrder(HttpServletRequest request,
+                                            @RequestParam String shopName,
                                             @RequestParam String outerOrderId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineBindingQueryService.countByOrder(shopName, outerOrderId);
     }
 }

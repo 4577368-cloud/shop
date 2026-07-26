@@ -5,7 +5,9 @@ import com.tang.plugin.domain.dto.ranking.RankProductRowDTO;
 import com.tang.plugin.domain.entity.ranking.RankProduct;
 import com.tang.plugin.domain.entity.ranking.RankSnapshot;
 import com.tang.plugin.repository.RankRepository;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,13 +36,24 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/plugin/ranking")
 public class RankingController {
 
+    /** Maximum products per import to prevent memory pressure and oversized transactions. */
+    private static final int MAX_IMPORT_SIZE = 5_000;
+
     @Resource
     private RankRepository rankRepository;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/import")
-    public Map<String, Object> importRanking(@RequestParam String shopName,
+    public Map<String, Object> importRanking(HttpServletRequest httpRequest,
+                                             @RequestParam String shopName,
                                              @RequestBody RankImportRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), shopName);
         int size = request.getProducts() == null ? 0 : request.getProducts().size();
+        if (size > MAX_IMPORT_SIZE) {
+            throw new com.tang.common.core.exception.CustomException(
+                    "Import size exceeds limit of " + MAX_IMPORT_SIZE, 400, "IMPORT_TOO_LARGE");
+        }
         Long snapshotId = rankRepository.upsertSnapshot(
                 shopName, request.getDateRange(), request.getStartDate(), request.getEndDate(), size);
         List<RankProduct> products = (request.getProducts() == null ? List.<RankProduct>of()
@@ -57,14 +70,18 @@ public class RankingController {
     }
 
     @GetMapping("/snapshots")
-    public List<RankSnapshot> snapshots(@RequestParam String shopName) {
+    public List<RankSnapshot> snapshots(HttpServletRequest request,
+                                        @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return rankRepository.listSnapshots(shopName);
     }
 
     @GetMapping("/list")
-    public List<RankProduct> list(@RequestParam String shopName,
+    public List<RankProduct> list(HttpServletRequest request,
+                                  @RequestParam String shopName,
                                   @RequestParam(required = false) Long snapshotId,
                                   @RequestParam(required = false) String categoryL1) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (snapshotId == null) {
             List<RankSnapshot> snaps = rankRepository.listSnapshots(shopName);
             if (snaps.isEmpty()) {

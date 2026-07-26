@@ -8,7 +8,9 @@ import com.tang.plugin.domain.entity.match.ShopProductMatchCandidate;
 import com.tang.plugin.service.match.ProductBindingQueryService;
 import com.tang.plugin.service.match.ProductBindingService;
 import com.tang.plugin.service.match.ProductMatchService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,9 +39,13 @@ public class ProductBindingAdminController {
     private ProductBindingService productBindingService;
     @Resource
     private ProductBindingQueryService productBindingQueryService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/candidates/generate")
-    public Map<String, Object> generateCandidates(@RequestBody GenerateMatchCandidateDTO dto) {
+    public Map<String, Object> generateCandidates(HttpServletRequest request,
+                                                  @RequestBody GenerateMatchCandidateDTO dto) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), dto.getShopName());
         int count = productMatchService.generateCandidates(dto);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "OK");
@@ -48,36 +54,48 @@ public class ProductBindingAdminController {
     }
 
     @GetMapping("/candidates/pending")
-    public List<ShopProductMatchCandidate> listPending(@RequestParam String shopName) {
+    public List<ShopProductMatchCandidate> listPending(HttpServletRequest request,
+                                                       @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return productMatchService.listPending(shopName);
     }
 
     @PostMapping("/candidates/reject")
-    public Map<String, Object> rejectCandidate(@RequestParam String shopName, @RequestParam Long candidateId) {
+    public Map<String, Object> rejectCandidate(HttpServletRequest request,
+                                               @RequestParam String shopName, @RequestParam Long candidateId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         productMatchService.rejectCandidate(shopName, candidateId);
         return ok();
     }
 
     @PostMapping("/confirm")
-    public Map<String, Object> confirm(@RequestBody ConfirmBindingDTO dto) {
+    public Map<String, Object> confirm(HttpServletRequest request,
+                                       @RequestBody ConfirmBindingDTO dto) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), dto.getShopName());
         productBindingService.confirmBinding(dto);
         return ok();
     }
 
     @PostMapping("/manual")
-    public Map<String, Object> bindManually(@RequestBody ManualBindingDTO dto) {
+    public Map<String, Object> bindManually(HttpServletRequest request,
+                                           @RequestBody ManualBindingDTO dto) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), dto.getShopName());
         productBindingService.bindManually(dto);
         return ok();
     }
 
     @PostMapping("/unbind")
-    public Map<String, Object> unbind(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+    public Map<String, Object> unbind(HttpServletRequest request,
+                                     @RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         productBindingService.unbind(shopName, thirdPlatformSkuId);
         return ok();
     }
 
     @GetMapping("/active")
-    public Map<String, Object> findActive(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+    public Map<String, Object> findActive(HttpServletRequest request,
+                                          @RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         Optional<SkuBindingView> view = productBindingQueryService.findActiveSkuBinding(shopName, thirdPlatformSkuId);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "OK");

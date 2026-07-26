@@ -33,10 +33,14 @@ public class PluginExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleOther(Exception e) {
+        // M-5: log full stack trace with class name for ops debugging, but return a generic
+        // message to the client — exposing exception class names leaks backend library versions
+        // (e.g. SQLException → DB type) and aids attackers in fingerprinting the stack.
         log.error("Unhandled error: {}", e.getMessage(), e);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", "ERROR");
-        body.put("message", e.getClass().getSimpleName() + ": " + e.getMessage());
+        body.put("message", "Internal Server Error");
+        body.put("code", "INTERNAL_ERROR");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 }

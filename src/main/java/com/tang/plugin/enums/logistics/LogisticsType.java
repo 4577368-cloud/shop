@@ -10,6 +10,10 @@ public enum LogisticsType {
     FOOD("食品"),
     BATTERY_MAGNETIC("带电 / 带磁"),
     BLADE("刀具"),
+    LIQUID("液体"),
+    POWDER("粉末"),
+    FRAGILE("易碎品"),
+    COSMETIC("化妆品"),
     OTHER("其他特殊品类");
 
     private final String label;
@@ -23,6 +27,7 @@ public enum LogisticsType {
     }
 
     public boolean isHighRisk() {
-        return this == BATTERY_MAGNETIC || this == FOOD || this == BLADE;
+        return this == BATTERY_MAGNETIC || this == FOOD || this == BLADE
+                || this == LIQUID || this == POWDER;
     }
 }

@@ -53,21 +53,41 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     );
 
     /**
-     * Path prefixes that require JWT authentication (for future phases).
-     * Webhook endpoints are public but verify their own signature (PayPal Cert-Webhook).
+     * Path prefixes that require JWT authentication.
+     *
+     * <p>SECURITY: All business APIs that accept a {@code shopName} parameter are protected —
+     * the caller must be authenticated, and the controller must additionally verify (via
+     * {@code ShopAccessGuard}) that the shopName is bound to the calling user. Webhook endpoints
+     * are public but verify their own HMAC signature.
      */
     private static final String[] PROTECTED_PREFIXES = {
             "/api/plugin/user/",
             "/api/plugin/billing/",
-            "/api/plugin/marketing/"
+            "/api/plugin/marketing/",
+            // Business APIs (P0 security fix): all of these take a shopName param and must be
+            // both authenticated and ownership-checked.
+            "/api/plugin/match/",
+            "/api/plugin/order/",
+            "/api/plugin/pricing/",
+            "/api/plugin/logistics/",
+            "/api/plugin/catalog/",
+            "/api/plugin/product/",
+            "/api/plugin/sync/",
+            "/api/plugin/sku-align/",
+            "/api/plugin/ranking/",
+            "/api/plugin/procurement/"
     };
 
     /**
      * Exact paths that bypass JWT protection even if they fall under a protected prefix.
-     * Currently: PayPal webhook (under /billing/ but called by PayPal, not browsers).
+     * <ul>
+     *   <li>PayPal webhook (under /billing/ but called by PayPal, not browsers).</li>
+     *   <li>Shopify webhook (under /shopify/ but verified via HMAC-SHA256).</li>
+     * </ul>
      */
     private static final Set<String> PUBLIC_EXACT_PATHS = Set.of(
-            "/api/plugin/billing/paypal/webhook"
+            "/api/plugin/billing/paypal/webhook",
+            "/api/plugin/shopify/webhook"
     );
 
     @Resource

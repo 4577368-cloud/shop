@@ -10,7 +10,9 @@ import com.tang.plugin.domain.dto.logistics.ProductLogisticsProfileVO;
 import com.tang.plugin.service.catalog.TangbuyMallClient;
 import com.tang.plugin.service.logistics.LogisticsAnalysisService;
 import com.tang.plugin.service.logistics.LogisticsTemplateService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,12 +36,16 @@ public class LogisticsController {
     private LogisticsTemplateService logisticsTemplateService;
     @Resource
     private TangbuyMallClient tangbuyMallClient;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     /** Classify (or refresh) bound products and return the distribution summary. */
     @PostMapping("/analyze")
     public LogisticsAnalysisVO analyze(
+            HttpServletRequest request,
             @RequestParam("shopName") String shopName,
             @RequestParam(value = "force", required = false, defaultValue = "false") boolean force) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("analyze requires shopName");
         }
@@ -48,7 +54,9 @@ public class LogisticsController {
 
     /** Read the last analysis snapshot without reclassifying USER rows (re-runs auto for others). */
     @GetMapping("/analysis")
-    public LogisticsAnalysisVO analysis(@RequestParam("shopName") String shopName) {
+    public LogisticsAnalysisVO analysis(HttpServletRequest request,
+                                        @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("analysis requires shopName");
         }
@@ -56,17 +64,23 @@ public class LogisticsController {
     }
 
     @PostMapping("/correct-type")
-    public ProductLogisticsProfileVO correctType(@RequestBody CorrectLogisticsTypeRequest request) {
+    public ProductLogisticsProfileVO correctType(HttpServletRequest httpRequest,
+                                                  @RequestBody CorrectLogisticsTypeRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return logisticsAnalysisService.correct(request);
     }
 
     @GetMapping("/template")
-    public LogisticsTemplateVO getTemplate(@RequestParam("shopName") String shopName) {
+    public LogisticsTemplateVO getTemplate(HttpServletRequest request,
+                                           @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return logisticsTemplateService.getEffective(shopName);
     }
 
     @PostMapping("/template")
-    public LogisticsTemplateVO upsertTemplate(@RequestBody LogisticsTemplateUpsertRequest request) {
+    public LogisticsTemplateVO upsertTemplate(HttpServletRequest httpRequest,
+                                              @RequestBody LogisticsTemplateUpsertRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return logisticsTemplateService.upsert(request);
     }
 

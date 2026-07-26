@@ -5,7 +5,9 @@ import com.tang.plugin.domain.entity.order.ThirdPlatformOrderLine;
 import com.tang.plugin.enums.order.OrderLineHandlingStatus;
 import com.tang.plugin.service.order.OrderLineHandlingQueryService;
 import com.tang.plugin.service.order.OrderLineHandlingService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,33 +32,43 @@ public class OrderLineHandlingAdminController {
     private OrderLineHandlingService orderLineHandlingService;
     @Resource
     private OrderLineHandlingQueryService orderLineHandlingQueryService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/ignore")
-    public Map<String, Object> ignore(@RequestParam String shopName,
+    public Map<String, Object> ignore(HttpServletRequest request,
+                                      @RequestParam String shopName,
                                       @RequestParam String lineId,
                                       @RequestParam(required = false) String note) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         orderLineHandlingService.markIgnored(shopName, lineId, note);
         return ok();
     }
 
     @PostMapping("/resolve")
-    public Map<String, Object> resolve(@RequestParam String shopName,
+    public Map<String, Object> resolve(HttpServletRequest request,
+                                       @RequestParam String shopName,
                                        @RequestParam String lineId,
                                        @RequestParam(required = false) String note) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         orderLineHandlingService.markResolved(shopName, lineId, note);
         return ok();
     }
 
     @PostMapping("/reopen")
-    public Map<String, Object> reopen(@RequestParam String shopName, @RequestParam String lineId) {
+    public Map<String, Object> reopen(HttpServletRequest request,
+                                      @RequestParam String shopName, @RequestParam String lineId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         orderLineHandlingService.reopen(shopName, lineId);
         return ok();
     }
 
     @GetMapping("/unbound")
-    public List<ThirdPlatformOrderLine> listUnbound(@RequestParam String shopName,
+    public List<ThirdPlatformOrderLine> listUnbound(HttpServletRequest request,
+                                                    @RequestParam String shopName,
                                                     @RequestParam(required = false) OrderLineHandlingStatus handlingStatus,
                                                     @RequestParam(required = false) String outerOrderId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         UnboundOrderLineQuery query = new UnboundOrderLineQuery()
                 .setShopName(shopName)
                 .setHandlingStatus(handlingStatus)
@@ -65,7 +77,9 @@ public class OrderLineHandlingAdminController {
     }
 
     @GetMapping("/count")
-    public Map<String, Integer> count(@RequestParam String shopName) {
+    public Map<String, Integer> count(HttpServletRequest request,
+                                      @RequestParam String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return orderLineHandlingQueryService.countUnboundByHandling(shopName);
     }
 

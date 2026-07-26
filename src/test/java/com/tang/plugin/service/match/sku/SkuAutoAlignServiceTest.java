@@ -116,16 +116,16 @@ class SkuAutoAlignServiceTest {
         assertEquals(2, result.getTotalVariants());
         assertEquals(2, result.getMatchedCount());
 
-        // Auto-aligned variants land as PENDING (AI-suggested, awaiting confirmation).
+        // High-confidence auto-aligned variants land as ACTIVE (single-SKU or score>=0.8).
         ShopProductBinding red = bindingRepository.findBindableBySkuId(SHOP, V1).orElseThrow();
         assertEquals("sku-red", red.getTangbuySkuId());
         assertEquals("AUTO_ALIGN", red.getBindSource());
-        assertEquals(BindingStatus.PENDING, red.getBindStatus());
+        assertEquals(BindingStatus.ACTIVE, red.getBindStatus());
         assertNotNull(red.getCandidateId());
 
         ShopProductBinding blue = bindingRepository.findBindableBySkuId(SHOP, V2).orElseThrow();
         assertEquals("sku-blue", blue.getTangbuySkuId());
-        assertEquals(BindingStatus.PENDING, blue.getBindStatus());
+        assertEquals(BindingStatus.ACTIVE, blue.getBindStatus());
 
         ShopProductMatchCandidate candidate = candidateRepository.findById(red.getCandidateId()).orElseThrow();
         assertEquals(MatchSource.RULE, candidate.getMatchSource());

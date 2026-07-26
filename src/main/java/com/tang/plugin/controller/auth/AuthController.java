@@ -64,10 +64,12 @@ public class AuthController {
         if (rawRefreshToken == null && body != null) {
             rawRefreshToken = body.refreshToken();
         }
-        RefreshResponse resp = authService.refresh(rawRefreshToken);
-        // Rotate access cookie.
+        RefreshResponse resp = authService.refresh(rawRefreshToken, httpRequest);
+        // Rotate access + refresh cookies (refresh token rotation: H-1).
         httpResponse.addHeader("Set-Cookie",
                 cookieHelper.buildAccessCookie(resp.accessToken()).toString());
+        httpResponse.addHeader("Set-Cookie",
+                cookieHelper.buildRefreshCookie(resp.refreshToken()).toString());
         return ResponseEntity.ok(resp);
     }
 

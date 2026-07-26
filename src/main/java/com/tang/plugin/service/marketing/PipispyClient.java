@@ -41,6 +41,7 @@ public class PipispyClient {
                 t.setDaemon(true);
                 return t;
             });
+    private volatile RestClient restClient;
 
     public MarketingDataResponse postData(String uri, Map<String, Object> params) {
         if (!props.isConfigured()) {
@@ -55,7 +56,7 @@ public class PipispyClient {
         body.put("params", params == null ? Map.of() : params);
 
         try {
-            String raw = restClient().post()
+            String raw = getRestClient().post()
                     .uri(props.getDataUrl())
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
@@ -75,7 +76,7 @@ public class PipispyClient {
         }
         Map<String, Object> body = Map.of("key", props.getApiKey().trim());
         try {
-            String raw = restClient().post()
+            String raw = getRestClient().post()
                     .uri(props.getCreditsUrl())
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
@@ -96,14 +97,14 @@ public class PipispyClient {
      */
     public Map<String, MarketingDataResponse> fanOut(List<DossierRequestItem> items) {
         Map<String, MarketingDataResponse> out = new LinkedHashMap<>();
+        if (items == null || items.isEmpty()) {
+            return out;
+        }
         if (!props.isConfigured()) {
             MarketingDataResponse err = error(503, "PIPIADS API key not configured on server");
             for (DossierRequestItem item : items) {
                 out.put(tagOf(item), err);
             }
-            return out;
-        }
-        if (items == null || items.isEmpty()) {
             return out;
         }
         List<CompletableFuture<Map.Entry<String, MarketingDataResponse>>> futures = items.stream()
@@ -129,11 +130,18 @@ public class PipispyClient {
         return StringUtils.isNotBlank(item.tag()) ? item.tag() : item.uri();
     }
 
-    private RestClient restClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(props.getConnectTimeoutMs());
-        factory.setReadTimeout(props.getReadTimeoutMs());
-        return RestClient.builder().requestFactory(factory).build();
+    private RestClient getRestClient() {
+        if (restClient == null) {
+            synchronized (this) {
+                if (restClient == null) {
+                    SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+                    factory.setConnectTimeout(props.getConnectTimeoutMs());
+                    factory.setReadTimeout(props.getReadTimeoutMs());
+                    restClient = RestClient.builder().requestFactory(factory).build();
+                }
+            }
+        }
+        return restClient;
     }
 
     private MarketingDataResponse mapEnvelope(String raw) {

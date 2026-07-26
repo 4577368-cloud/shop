@@ -6,7 +6,9 @@ import com.tang.plugin.domain.dto.logistics.PatchQuotesResult;
 import com.tang.plugin.domain.dto.logistics.UpsertAcceptancesRequest;
 import com.tang.plugin.domain.dto.logistics.UpsertAcceptancesResult;
 import com.tang.plugin.service.logistics.LogisticsAcceptanceService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,10 +40,14 @@ public class LogisticsAcceptanceController {
 
     @Resource
     private LogisticsAcceptanceService logisticsAcceptanceService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     /** 列出某 shop 的全量接受决策。 */
     @GetMapping
-    public List<LogisticsAcceptanceVO> list(@RequestParam("shopName") String shopName) {
+    public List<LogisticsAcceptanceVO> list(HttpServletRequest request,
+                                             @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (StringUtils.isBlank(shopName)) {
             return List.of();
         }
@@ -53,7 +59,9 @@ public class LogisticsAcceptanceController {
      * 命中则覆盖，未命中则插入。
      */
     @PostMapping
-    public UpsertAcceptancesResult upsert(@RequestBody UpsertAcceptancesRequest request) {
+    public UpsertAcceptancesResult upsert(HttpServletRequest httpRequest,
+                                          @RequestBody UpsertAcceptancesRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return logisticsAcceptanceService.upsert(request);
     }
 
@@ -61,7 +69,9 @@ public class LogisticsAcceptanceController {
      * 修补已存在决策的线路信息。仅更新命中的记录，不创建新记录。
      */
     @PostMapping("/patch-quotes")
-    public PatchQuotesResult patchQuotes(@RequestBody PatchQuotesRequest request) {
+    public PatchQuotesResult patchQuotes(HttpServletRequest httpRequest,
+                                         @RequestBody PatchQuotesRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return logisticsAcceptanceService.patchQuotes(request);
     }
 }

@@ -8,7 +8,9 @@ import com.tang.plugin.service.match.SkuBindingOverviewService;
 import com.tang.plugin.service.match.sku.Crossborder1688ProductClient;
 import com.tang.plugin.service.match.sku.SkuAutoAlignService;
 import com.tang.plugin.service.match.sku.SkuManualBindService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,12 +39,16 @@ public class SkuBindingController {
     private Crossborder1688ProductClient crossborder1688ProductClient;
     @Resource
     private SkuManualBindService skuManualBindService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/overview")
     public List<SkuProductOverviewVO> overview(
+            HttpServletRequest request,
             @RequestParam String shopName,
             @RequestParam(required = false) Integer thumbWidth,
             @RequestParam(required = false, defaultValue = "false") boolean compact) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuBindingOverviewService.overview(shopName, thumbWidth, compact);
     }
 
@@ -51,27 +57,35 @@ public class SkuBindingController {
      * per-variant RULE bindings. {@code offerId} is optional (resolved from the product-level binding).
      */
     @PostMapping("/auto-align")
-    public SkuAutoAlignResultVO autoAlign(@RequestParam String shopName,
+    public SkuAutoAlignResultVO autoAlign(HttpServletRequest request,
+                                          @RequestParam String shopName,
                                           @RequestParam String thirdPlatformItemId,
                                           @RequestParam(required = false) String offerId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return skuAutoAlignService.autoAlign(shopName, thirdPlatformItemId, offerId);
     }
 
     /** "确认无误": promote a single variant's PENDING (AI-suggested) binding to ACTIVE. */
     @PostMapping("/ack")
-    public void ack(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+    public void ack(HttpServletRequest request,
+                    @RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         skuAutoAlignService.acknowledge(shopName, thirdPlatformSkuId);
     }
 
     /** "取消关联": soft-unbind a single variant's binding (PENDING or ACTIVE). */
     @PostMapping("/unbind")
-    public void unbind(@RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+    public void unbind(HttpServletRequest request,
+                       @RequestParam String shopName, @RequestParam String thirdPlatformSkuId) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         skuAutoAlignService.unbind(shopName, thirdPlatformSkuId);
     }
 
     /** Manual SKU pick from /sku-align: writes ACTIVE binding with itemGet audit metadata. */
     @PostMapping("/bind")
-    public void bind(@RequestBody SkuBindDTO dto) {
+    public void bind(HttpServletRequest request,
+                     @RequestBody SkuBindDTO dto) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), dto.getShopName());
         skuManualBindService.bind(dto);
     }
 

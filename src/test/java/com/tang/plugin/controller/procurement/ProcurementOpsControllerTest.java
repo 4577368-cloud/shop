@@ -3,7 +3,10 @@ package com.tang.plugin.controller.procurement;
 import com.tang.plugin.domain.entity.procurement.ThirdPlatformProcurementTask;
 import com.tang.plugin.enums.procurement.ProcurementTaskStatus;
 import com.tang.plugin.repository.ThirdPlatformProcurementTaskRepository;
+import com.tang.plugin.service.auth.CookieHelper;
+import com.tang.plugin.service.auth.JwtService;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ProcurementOpsControllerTest {
 
     private static final String SHOP = "ops-ctrl-shop";
+    private static final Long TEST_USER_ID = 1001L;
 
     @Autowired
     private MockMvc mockMvc;
@@ -34,11 +38,21 @@ class ProcurementOpsControllerTest {
     private ThirdPlatformProcurementTaskRepository taskRepository;
     @Resource
     private JdbcTemplate jdbcTemplate;
+    @Resource
+    private JwtService jwtService;
+
+    private Cookie authCookie;
 
     @BeforeEach
     void clean() {
         jdbcTemplate.update("DELETE FROM third_platform_procurement_consumption WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM third_platform_procurement_task WHERE shop_name = ?", SHOP);
+        jdbcTemplate.update("DELETE FROM user_shop WHERE shop_name = ?", SHOP);
+        jdbcTemplate.update(
+                "INSERT INTO user_shop (user_id, shop_name, shop_domain, role) VALUES (?, ?, ?, 'owner')",
+                TEST_USER_ID, SHOP, SHOP + ".myshopify.com");
+        String token = jwtService.generateAccessToken(TEST_USER_ID, "test@example.com");
+        authCookie = new Cookie(CookieHelper.ACCESS_COOKIE, token);
     }
 
     @Test
@@ -47,7 +61,8 @@ class ProcurementOpsControllerTest {
 
         mockMvc.perform(get("/api/plugin/procurement/ops/chain/by-task")
                         .param("shopName", SHOP)
-                        .param("taskId", String.valueOf(taskId)))
+                        .param("taskId", String.valueOf(taskId))
+                        .cookie(authCookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.taskId").value(taskId))
                 .andExpect(jsonPath("$.taskStatus").value("PENDING"))
@@ -61,7 +76,8 @@ class ProcurementOpsControllerTest {
         seedPending("L-ctrl-summary");
 
         mockMvc.perform(get("/api/plugin/procurement/ops/summary")
-                        .param("shopName", SHOP))
+                        .param("shopName", SHOP)
+                        .cookie(authCookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.shopName").value(SHOP))
                 .andExpect(jsonPath("$.taskStatusCounts.PENDING").value(1))
@@ -73,7 +89,8 @@ class ProcurementOpsControllerTest {
         seedPending("L-ctrl-anomaly");
 
         mockMvc.perform(get("/api/plugin/procurement/ops/anomalies")
-                        .param("shopName", SHOP))
+                        .param("shopName", SHOP)
+                        .cookie(authCookie))
                 .andExpect(status().isOk());
     }
 

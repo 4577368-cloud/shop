@@ -12,6 +12,7 @@ import com.tang.plugin.dto.billing.BillingDtos.PaymentOrderListResponse;
 import com.tang.plugin.dto.billing.BillingDtos.RechargeRequest;
 import com.tang.plugin.dto.billing.BillingDtos.TransactionListResponse;
 import com.tang.plugin.service.billing.BillingService;
+import com.tang.plugin.service.user.AdminGuard;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,8 @@ public class BillingController {
 
     @Resource
     private BillingService billingService;
+    @Resource
+    private AdminGuard adminGuard;
 
     @GetMapping("/overview")
     public ResponseEntity<AccountOverview> overview(HttpServletRequest httpRequest) {
@@ -78,6 +81,7 @@ public class BillingController {
             HttpServletRequest httpRequest,
             @RequestBody RechargeRequest req) {
         Long userId = currentUserId(httpRequest);
+        adminGuard.assertAdmin(userId);
         return ResponseEntity.ok(billingService.recharge(userId, req));
     }
 
@@ -143,7 +147,8 @@ public class BillingController {
         Long userId = (Long) httpRequest.getAttribute("userId");
         if (userId == null) {
             // 不应发生：JwtAuthFilter 已在受保护路径上注入 userId。
-            throw new IllegalStateException("userId not found in request attributes");
+            throw new com.tang.common.core.exception.CustomException(
+                    "Unauthorized: login required", 401, "UNAUTHENTICATED");
         }
         return userId;
     }

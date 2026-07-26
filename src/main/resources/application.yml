@@ -75,8 +75,10 @@ tang:
     # User auth (P1): JWT signing + cookie config
     auth:
       jwt:
-        secret: ${TANG_PLUGIN_JWT_SECRET:dev-secret-change-in-production-min-32-chars-xxxxxxxxxx}
-        access-ttl-seconds: ${TANG_PLUGIN_JWT_ACCESS_TTL:604800}
+        # SECURITY: no default value. App fails to start if TANG_PLUGIN_JWT_SECRET is unset
+        # or shorter than 32 chars (see JwtService#init). Set it explicitly in your environment.
+        secret: ${TANG_PLUGIN_JWT_SECRET:}
+        access-ttl-seconds: ${TANG_PLUGIN_JWT_ACCESS_TTL:900}
         refresh-ttl-seconds: ${TANG_PLUGIN_JWT_REFRESH_TTL:2592000}
       cookie:
         # Same-site policy: Lax works for localhost (same-site across ports). Use "none" + HTTPS in prod cross-origin.

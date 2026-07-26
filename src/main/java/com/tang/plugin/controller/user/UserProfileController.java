@@ -36,10 +36,12 @@ public class UserProfileController {
 
     /** 允许的 locale 值（与 i18n 配置一致）。 */
     private static final Set<String> ALLOWED_LOCALES = Set.of("zh", "en", "fr", "es");
-    /** 允许的 currency 值。 */
-    private static final Set<String> ALLOWED_CURRENCIES = Set.of("CNY", "USD", "EUR");
+    /** 允许的 currency 值（与前端 dropdown 列表一致，避免后端 400）。 */
+    private static final Set<String> ALLOWED_CURRENCIES = Set.of("CNY", "USD", "EUR", "GBP", "JPY", "HKD");
     /** 允许的 AI 响应语言。 */
     private static final Set<String> ALLOWED_AI_LANGS = Set.of("zh", "en", "fr", "es");
+    /** avatarUrl 允许的 URL scheme（防 javascript:/data: 等滥用）。 */
+    private static final Set<String> ALLOWED_AVATAR_SCHEMES = Set.of("http", "https");
 
     @Resource
     private AppUserRepository userRepository;
@@ -68,8 +70,19 @@ public class UserProfileController {
                 throw new CustomException("Name must be 1-128 chars", 400, "INVALID_NAME");
             }
         }
-        if (StringUtils.isNotBlank(req.avatarUrl()) && req.avatarUrl().length() > 512) {
-            throw new CustomException("avatarUrl too long (max 512)", 400, "INVALID_AVATAR");
+        if (StringUtils.isNotBlank(req.avatarUrl())) {
+            if (req.avatarUrl().length() > 512) {
+                throw new CustomException("avatarUrl too long (max 512)", 400, "INVALID_AVATAR");
+            }
+            // M-4: reject non-http(s) schemes — prevents javascript:/data: abuse in <img src>.
+            try {
+                String scheme = new java.net.URI(req.avatarUrl().trim()).getScheme();
+                if (scheme == null || !ALLOWED_AVATAR_SCHEMES.contains(scheme.toLowerCase())) {
+                    throw new CustomException("avatarUrl must use http or https scheme", 400, "INVALID_AVATAR");
+                }
+            } catch (java.net.URISyntaxException e) {
+                throw new CustomException("avatarUrl is not a valid URL", 400, "INVALID_AVATAR");
+            }
         }
         if (StringUtils.isNotBlank(req.locale()) && !ALLOWED_LOCALES.contains(req.locale())) {
             throw new CustomException("locale must be one of " + ALLOWED_LOCALES, 400, "INVALID_LOCALE");
@@ -81,6 +94,16 @@ public class UserProfileController {
                 && !ALLOWED_AI_LANGS.contains(req.aiResponseLanguage())) {
             throw new CustomException("aiResponseLanguage must be one of " + ALLOWED_AI_LANGS,
                     400, "INVALID_AI_LANG");
+        }
+        // M-9: validate timezone is a legal IANA zone id (e.g. "Asia/Shanghai").
+        // Empty/blank means "don't update"; null/invalid string is rejected.
+        if (StringUtils.isNotBlank(req.timezone())) {
+            try {
+                java.time.ZoneId.of(req.timezone());
+            } catch (Exception e) {
+                throw new CustomException("timezone must be a valid IANA zone id (e.g. Asia/Shanghai)",
+                        400, "INVALID_TIMEZONE");
+            }
         }
 
         // 将空字符串转为 null，让 COALESCE 跳过

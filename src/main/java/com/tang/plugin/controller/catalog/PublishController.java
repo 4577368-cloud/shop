@@ -6,7 +6,9 @@ import com.tang.plugin.domain.dto.publish.PublishResultVO;
 import com.tang.plugin.service.publish.CatalogPublishLinkService;
 import com.tang.plugin.service.publish.CatalogPublishService;
 import com.tang.plugin.service.publish.ProductPublishRecordService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,18 +35,24 @@ public class PublishController {
     private ProductPublishRecordService productPublishRecordService;
     @Resource
     private CatalogPublishLinkService catalogPublishLinkService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @PostMapping("/publish")
-    public PublishResultVO publish(@RequestBody PublishRequest request) {
+    public PublishResultVO publish(HttpServletRequest httpRequest,
+                                  @RequestBody PublishRequest request) {
         if (request == null) {
             throw new CustomException("publish requires a body");
         }
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return catalogPublishService.publish(request);
     }
 
     /** "已刊登" count: catalog publishes still on Shopify (excludes products deleted from the store). */
     @GetMapping("/published-count")
-    public Map<String, Integer> publishedCount(@RequestParam("shopName") String shopName) {
+    public Map<String, Integer> publishedCount(HttpServletRequest request,
+                                                 @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return Map.of("count", productPublishRecordService.countPublished(shopName));
     }
 
@@ -53,7 +61,9 @@ public class PublishController {
      * linking existed. Idempotent — products already linked are left untouched.
      */
     @PostMapping("/link-published")
-    public CatalogPublishLinkService.BackfillResult linkPublished(@RequestParam("shopName") String shopName) {
+    public CatalogPublishLinkService.BackfillResult linkPublished(HttpServletRequest request,
+                                                                  @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return catalogPublishLinkService.backfillPublishedBindings(shopName);
     }
 }

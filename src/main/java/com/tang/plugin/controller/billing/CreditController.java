@@ -8,6 +8,7 @@ import com.tang.plugin.dto.billing.BillingDtos.ConsumeCreditsResult;
 import com.tang.plugin.dto.billing.BillingDtos.GrantCreditsRequest;
 import com.tang.plugin.dto.billing.BillingDtos.GrantCreditsResult;
 import com.tang.plugin.service.billing.CreditService;
+import com.tang.plugin.service.user.AdminGuard;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +47,8 @@ public class CreditController {
 
     @Resource
     private CreditService creditService;
+    @Resource
+    private AdminGuard adminGuard;
 
     /**
      * 积分余额。运营中心调用此接口替代 mock。
@@ -108,6 +111,7 @@ public class CreditController {
             HttpServletRequest httpRequest,
             @RequestBody GrantCreditsRequest req) {
         Long userId = currentUserId(httpRequest);
+        adminGuard.assertAdmin(userId);
         return ResponseEntity.ok(creditService.grantCredits(userId, req));
     }
 
@@ -116,7 +120,8 @@ public class CreditController {
     private Long currentUserId(HttpServletRequest httpRequest) {
         Long userId = (Long) httpRequest.getAttribute("userId");
         if (userId == null) {
-            throw new IllegalStateException("userId not found in request attributes");
+            throw new com.tang.common.core.exception.CustomException(
+                    "Unauthorized: login required", 401, "UNAUTHENTICATED");
         }
         return userId;
     }

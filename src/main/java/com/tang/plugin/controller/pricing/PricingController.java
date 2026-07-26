@@ -4,7 +4,9 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.pricing.PricingTemplateUpsertRequest;
 import com.tang.plugin.domain.dto.pricing.PricingTemplateVO;
 import com.tang.plugin.service.pricing.PricingTemplateService;
+import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -27,9 +29,13 @@ public class PricingController {
 
     @Resource
     private PricingTemplateService pricingTemplateService;
+    @Resource
+    private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/template")
-    public PricingTemplateVO getTemplate(@RequestParam("shopName") String shopName) {
+    public PricingTemplateVO getTemplate(HttpServletRequest request,
+                                          @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("template requires shopName");
         }
@@ -37,12 +43,16 @@ public class PricingController {
     }
 
     @PostMapping("/template")
-    public PricingTemplateVO upsertTemplate(@RequestBody PricingTemplateUpsertRequest request) {
+    public PricingTemplateVO upsertTemplate(HttpServletRequest httpRequest,
+                                            @RequestBody PricingTemplateUpsertRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return pricingTemplateService.toVO(pricingTemplateService.upsert(request));
     }
 
     @DeleteMapping("/template")
-    public PricingTemplateVO clearTemplate(@RequestParam("shopName") String shopName) {
+    public PricingTemplateVO clearTemplate(HttpServletRequest request,
+                                            @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("template requires shopName");
         }

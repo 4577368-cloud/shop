@@ -3,7 +3,10 @@ package com.tang.plugin.controller.procurement;
 import com.tang.plugin.domain.entity.procurement.ThirdPlatformProcurementTask;
 import com.tang.plugin.enums.procurement.ProcurementTaskStatus;
 import com.tang.plugin.repository.ThirdPlatformProcurementTaskRepository;
+import com.tang.plugin.service.auth.CookieHelper;
+import com.tang.plugin.service.auth.JwtService;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +31,7 @@ class ProcurementConsumerControllerTest {
 
     private static final String SHOP = "consumer-ctrl-shop";
     private static final String CONSUMER = "main-platform";
+    private static final Long TEST_USER_ID = 1001L;
 
     @Autowired
     private MockMvc mockMvc;
@@ -35,11 +39,21 @@ class ProcurementConsumerControllerTest {
     private ThirdPlatformProcurementTaskRepository taskRepository;
     @Resource
     private JdbcTemplate jdbcTemplate;
+    @Resource
+    private JwtService jwtService;
+
+    private Cookie authCookie;
 
     @BeforeEach
     void clean() {
         jdbcTemplate.update("DELETE FROM third_platform_procurement_consumption WHERE shop_name = ?", SHOP);
         jdbcTemplate.update("DELETE FROM third_platform_procurement_task WHERE shop_name = ?", SHOP);
+        jdbcTemplate.update("DELETE FROM user_shop WHERE shop_name = ?", SHOP);
+        jdbcTemplate.update(
+                "INSERT INTO user_shop (user_id, shop_name, shop_domain, role) VALUES (?, ?, ?, 'owner')",
+                TEST_USER_ID, SHOP, SHOP + ".myshopify.com");
+        String token = jwtService.generateAccessToken(TEST_USER_ID, "test@example.com");
+        authCookie = new Cookie(CookieHelper.ACCESS_COOKIE, token);
     }
 
     @Test
@@ -49,7 +63,8 @@ class ProcurementConsumerControllerTest {
         mockMvc.perform(post("/api/plugin/procurement/consumer/receive")
                         .param("shopName", SHOP)
                         .param("taskId", String.valueOf(taskId))
-                        .param("consumerId", CONSUMER))
+                        .param("consumerId", CONSUMER)
+                        .cookie(authCookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.consumptionOutcome").value("RECEIVED"))
                 .andExpect(jsonPath("$.consumptionStatus").value("RECEIVED"));
@@ -62,7 +77,8 @@ class ProcurementConsumerControllerTest {
         mockMvc.perform(post("/api/plugin/procurement/consumer/accept")
                         .param("shopName", SHOP)
                         .param("taskId", String.valueOf(taskId))
-                        .param("consumerId", CONSUMER))
+                        .param("consumerId", CONSUMER)
+                        .cookie(authCookie))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.consumptionOutcome").value("ACCEPTED"))
                 .andExpect(jsonPath("$.deliveryOutcome").value("DELIVERED"));

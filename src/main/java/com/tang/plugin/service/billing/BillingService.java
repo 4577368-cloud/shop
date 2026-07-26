@@ -351,7 +351,7 @@ public class BillingService {
                 .setStatus("created");
         paymentOrderRepository.insert(order);
 
-        log.info("PayPal order created in DB: id={} paypalOrderId={} purpose={} amountUsd={}cny",
+        log.info("PayPal order created in DB: id={} paypalOrderId={} purpose={} amountUsdCents={}",
                 order.getId(), paypalOrderId, purpose, req.amountUsdCents());
 
         return new CreatePayPalOrderResponse(
