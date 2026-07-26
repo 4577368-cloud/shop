@@ -5,6 +5,16 @@ import com.tang.plugin.domain.dto.match.SkuProductOverviewVO;
 import com.tang.plugin.domain.dto.match.SkuVariantVO;
 import com.tang.plugin.domain.dto.skualign.*;
 import com.tang.plugin.domain.entity.skualign.AlignmentRun;
+import com.tang.plugin.config.TxManger;
+import com.tang.plugin.domain.entity.match.ShopProductBinding;
+import com.tang.plugin.domain.entity.product.ThirdPlatformSku;
+import com.tang.plugin.enums.match.MatchSource;
+import com.tang.plugin.enums.skualign.ConfidenceLevel;
+import com.tang.plugin.enums.skualign.ProductOrigin;
+import com.tang.plugin.enums.skualign.SourceRole;
+import com.tang.plugin.enums.skualign.VariantBindingState;
+import com.tang.plugin.repository.ShopProductBindingRepository;
+import com.tang.plugin.repository.ThirdPlatformSkuRepository;
 import com.tang.plugin.enums.skualign.AlignmentRunStatus;
 import com.tang.plugin.enums.skualign.AlignmentTriggerType;
 import com.tang.plugin.domain.entity.skualign.ProductSourceBinding;
@@ -51,6 +61,14 @@ public class SkuAlignV1Service {
     private ProductSourceBindingRepository productSourceRepository;
     @Resource
     private SkuAlignEngineService skuAlignEngineService;
+    @Resource
+    private ShopProductBindingRepository shopProductBindingRepository;
+    @Resource
+    private ThirdPlatformSkuRepository thirdPlatformSkuRepository;
+    @Resource
+    private TxManger txManger;
+
+    private static final String BIND_SOURCE_FROM_PUBLISH = "FROM_PUBLISH";
 
     public SkuAlignOverviewVO overview(String shopName, String tab) {
         List<SkuProductOverviewVO> legacy = skuBindingOverviewService.overview(shopName);
@@ -209,6 +227,95 @@ public class SkuAlignV1Service {
                 .setTriggerType(AlignmentTriggerType.CARD_EXPAND)
                 .setScopeType("PRODUCT")
                 .setScopeIds(List.of(productId)));
+    }
+
+    /**
+     * Catalog publish: legacy per-variant CATALOG bindings are authoritative — mark V1 rows RESOLVED
+     * without running 1688 auto-align (internal goods id is not an offer id).
+     */
+    public void seedCatalogPublishAlignments(String shopName, String productId) {
+        if (StringUtils.isAnyBlank(shopName, productId)) {
+            return;
+        }
+        List<ThirdPlatformSku> variants = thirdPlatformSkuRepository.listByItem(shopName, productId);
+        if (variants.isEmpty()) {
+            return;
+        }
+        Map<String, ShopProductBinding> bindingByVariant = new java.util.HashMap<>();
+        String primaryOfferId = null;
+        for (ShopProductBinding b : shopProductBindingRepository.listBindableByShop(shopName)) {
+            if (!productId.equals(b.getThirdPlatformItemId())) {
+                continue;
+            }
+            if (!BIND_SOURCE_FROM_PUBLISH.equalsIgnoreCase(StringUtils.trimToEmpty(b.getBindSource()))) {
+                continue;
+            }
+            if (StringUtils.isNotBlank(b.getThirdPlatformSkuId())) {
+                bindingByVariant.putIfAbsent(b.getThirdPlatformSkuId(), b);
+            }
+            if (primaryOfferId == null && StringUtils.isNotBlank(b.getTangbuyProductId())) {
+                primaryOfferId = b.getTangbuyProductId().trim();
+            }
+        }
+        if (bindingByVariant.isEmpty()) {
+            return;
+        }
+        final String primaryOffer = primaryOfferId;
+        final int[] aligned = {0};
+        txManger.run(() -> {
+            for (ThirdPlatformSku variant : variants) {
+                ShopProductBinding legacy = bindingByVariant.get(variant.getThirdPlatformSkuId());
+                if (legacy == null || StringUtils.isBlank(legacy.getTangbuySkuId())) {
+                    continue;
+                }
+                String offerId = StringUtils.defaultIfBlank(legacy.getTangbuyProductId(), primaryOffer);
+                String offerSkuId = legacy.getTangbuySkuId().trim();
+                VariantSkuBinding binding = new VariantSkuBinding()
+                        .setShopName(shopName)
+                        .setThirdPlatformItemId(productId)
+                        .setThirdPlatformSkuId(variant.getThirdPlatformSkuId())
+                        .setOfferId(offerId)
+                        .setOfferSkuId(offerSkuId)
+                        .setSourceRole(SourceRole.PRIMARY)
+                        .setMatchSource(MatchSource.CATALOG)
+                        .setBindingState(VariantBindingState.ALIGNED)
+                        .setConfidenceScore(java.math.BigDecimal.ONE)
+                        .setConfidenceLevel(ConfidenceLevel.HIGH)
+                        .setManualLocked(false)
+                        .setActive(true)
+                        .setCreatedByType("CATALOG_PUBLISH");
+                v1BindingRepository.upsertActive(binding);
+
+                VariantAlignmentReview review = reviewRepository
+                        .findByVariant(shopName, variant.getThirdPlatformSkuId())
+                        .orElse(new VariantAlignmentReview()
+                                .setShopName(shopName)
+                                .setThirdPlatformItemId(productId)
+                                .setThirdPlatformSkuId(variant.getThirdPlatformSkuId()));
+                review.setReviewState(VariantReviewState.RESOLVED)
+                        .setSuggestedOfferId(offerId)
+                        .setSuggestedOfferSkuId(offerSkuId)
+                        .setSuggestedSourceRole(SourceRole.PRIMARY)
+                        .setSuggestedMatchSource(MatchSource.CATALOG.name())
+                        .setReasonText("商城上架 1:1 货源映射")
+                        .setRequiresUserAction(false);
+                reviewRepository.upsert(review);
+                aligned[0]++;
+            }
+            int unresolved = Math.max(0, variants.size() - aligned[0]);
+            productSourceRepository.upsertSummary(new ProductSourceBinding()
+                    .setShopName(shopName)
+                    .setThirdPlatformItemId(productId)
+                    .setPrimaryOfferId(primaryOffer)
+                    .setPrimarySourceType("CATALOG")
+                    .setProductOrigin(ProductOrigin.INTERNAL)
+                    .setMatchedVariantsCount(aligned[0])
+                    .setTotalVariantsCount(variants.size())
+                    .setUnresolvedVariantsCount(unresolved)
+                    .setLastAlignedAt(Instant.now()));
+        });
+        log.info("Catalog publish SKU seed shop={} product={} aligned={}/{}",
+                shopName, productId, aligned[0], variants.size());
     }
 
     /**

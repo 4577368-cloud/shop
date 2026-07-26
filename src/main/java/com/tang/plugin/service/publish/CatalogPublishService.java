@@ -4,8 +4,8 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.catalog.TangbuyCatalogProduct;
 import com.tang.plugin.domain.dto.publish.PublishRequest;
 import com.tang.plugin.domain.dto.publish.PublishResultVO;
-import com.tang.plugin.domain.dto.publish.ShopifyCreateProductResult;
 import com.tang.plugin.domain.dto.publish.PublishVariantSnapshot;
+import com.tang.plugin.domain.dto.publish.ShopifyCreateProductResult;
 import com.tang.plugin.domain.dto.publish.ShopifyVariantCreateInput;
 import com.tang.plugin.domain.entity.pricing.PricingTemplate;
 import com.tang.plugin.domain.entity.publish.ProductPublishRecord;
@@ -26,6 +26,8 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * Orchestrates publishing one Tangbuy catalog candidate into a new sellable Shopify product,
@@ -117,8 +119,20 @@ public class CatalogPublishService {
             // A published product is its own source (1:1) — record the definitive CATALOG binding so it
             // shows as已关联·来自 Tangbuy 商城 and is excluded from image-search matching. Fail-open.
             try {
-                catalogPublishLinkService.linkPublished(
-                        shopName, candidate, created.getProductId(), created.getVariantId());
+                List<PublishVariantSnapshot> publishSnapshots = CollectionUtils.isNotEmpty(request.getVariants())
+                        ? request.getVariants().stream().filter(Objects::nonNull).collect(Collectors.toList())
+                        : List.of();
+                List<String> createdVariantIds = created.variantIdsOrEmpty();
+                if (createdVariantIds.size() > 1 && publishSnapshots.size() == createdVariantIds.size()) {
+                    catalogPublishLinkService.linkPublishedVariants(
+                            shopName,
+                            candidate,
+                            created.getProductId(),
+                            CatalogPublishLinkService.zipVariantLinks(createdVariantIds, publishSnapshots));
+                } else {
+                    catalogPublishLinkService.linkPublished(
+                            shopName, candidate, created.getProductId(), created.getVariantId());
+                }
             } catch (Exception linkEx) {
                 log.warn("Catalog publish link failed (non-fatal) shopName={} candidateId={}: {}",
                         shopName, candidateId, linkEx.getMessage());

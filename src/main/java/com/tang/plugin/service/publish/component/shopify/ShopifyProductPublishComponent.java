@@ -307,23 +307,39 @@ public class ShopifyProductPublishComponent {
         if (CollectionUtils.isEmpty(nodes)) {
             throw new CustomException("Shopify productSet variant missing, shopName=" + shopName);
         }
-        JSONObject variant = nodes.getJSONObject(0);
-        String variantId = variant == null ? null : variant.getString("id");
-        JSONObject inventoryItem = variant == null ? null : variant.getJSONObject("inventoryItem");
-        String inventoryItemId = inventoryItem == null ? null : inventoryItem.getString("id");
+        List<String> variantIds = new ArrayList<>();
+        String firstVariantId = null;
+        String firstInventoryItemId = null;
+        for (int i = 0; i < nodes.size(); i++) {
+            JSONObject variant = nodes.getJSONObject(i);
+            if (variant == null) {
+                continue;
+            }
+            String variantId = variant.getString("id");
+            if (StringUtils.isBlank(variantId)) {
+                continue;
+            }
+            variantIds.add(variantId.trim());
+            if (firstVariantId == null) {
+                firstVariantId = variantId.trim();
+                JSONObject inventoryItem = variant.getJSONObject("inventoryItem");
+                firstInventoryItemId = inventoryItem == null ? null : inventoryItem.getString("id");
+            }
+        }
 
-        if (StringUtils.isAnyBlank(productId, handle, variantId, inventoryItemId)) {
+        if (StringUtils.isAnyBlank(productId, handle, firstVariantId, firstInventoryItemId)) {
             throw new CustomException("Shopify productSet incomplete ids, shopName=" + shopName
                     + " productId=" + productId + " handle=" + handle
-                    + " variantId=" + variantId + " inventoryItemId=" + inventoryItemId);
+                    + " variantId=" + firstVariantId + " inventoryItemId=" + firstInventoryItemId);
         }
 
         log.info("Shopify product created shopName={} productId={} variantCount={} firstVariantId={}",
-                shopName, productId, nodes.size(), variantId);
+                shopName, productId, variantIds.size(), firstVariantId);
         return new ShopifyCreateProductResult()
                 .setProductId(productId)
                 .setHandle(handle)
-                .setVariantId(variantId)
-                .setInventoryItemId(inventoryItemId);
+                .setVariantId(firstVariantId)
+                .setInventoryItemId(firstInventoryItemId)
+                .setVariantIds(variantIds);
     }
 }
