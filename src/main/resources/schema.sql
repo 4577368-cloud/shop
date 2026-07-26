@@ -591,9 +591,13 @@ CREATE TABLE IF NOT EXISTS rank_product (
     creator_count      INT,
     creator_order_rate DOUBLE PRECISION,
     tiktok_url         VARCHAR(2048),
+    country            VARCHAR(16)   NOT NULL DEFAULT '',
     del_flag           INT           NOT NULL DEFAULT 0,
     created_at         TIMESTAMP
 );
+
+-- Migration: add country for existing deployments (safe to re-run).
+ALTER TABLE rank_product ADD COLUMN IF NOT EXISTS country VARCHAR(16) NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_rank_product_snap
     ON rank_product (snapshot_id, shop_name, del_flag);
@@ -770,6 +774,10 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
     idempotency_key     VARCHAR(64),                   -- 幂等键（如 marketing_api 的 cacheKey）
     created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Migration: add idempotency_key for existing deployments (CREATE TABLE IF NOT EXISTS
+-- does not alter columns; index below requires the column to exist first).
+ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
 
 CREATE INDEX IF NOT EXISTS idx_credit_txn_user_created ON credit_transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_credit_txn_ref ON credit_transactions (ref_type, ref_id);
