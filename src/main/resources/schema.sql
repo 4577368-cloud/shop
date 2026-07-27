@@ -780,9 +780,10 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
 ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
 
 -- B1 修复：已部署环境从 VARCHAR(64) 扩容到 VARCHAR(255)。
--- H2 兼容语法：H2 支持 ALTER TABLE … ALTER COLUMN … VARCHAR(255)
--- PostgreSQL 兼容语法同上。
-ALTER TABLE credit_transactions ALTER COLUMN idempotency_key VARCHAR(255);
+-- PostgreSQL 语法要求 ALTER COLUMN … SET DATA TYPE（H2 兼容，且与上方
+-- shopify_store_auth 的迁移写法保持一致）。错误的 "ALTER COLUMN col VARCHAR(255)"
+-- 在真实 PostgreSQL 会报 "syntax error at or near VARCHAR"。
+ALTER TABLE credit_transactions ALTER COLUMN idempotency_key SET DATA TYPE VARCHAR(255);
 
 CREATE INDEX IF NOT EXISTS idx_credit_txn_user_created ON credit_transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_credit_txn_ref ON credit_transactions (ref_type, ref_id);
