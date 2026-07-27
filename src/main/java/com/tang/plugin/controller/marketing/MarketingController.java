@@ -136,7 +136,10 @@ public class MarketingController {
     assertDailyLimit(userId);
 
     // 3) 预估 assert（防浪费上游额度）
-    int estimate = expectedCredits != null ? expectedCredits : defaultEstimate(uri, params, 12);
+    // B4 修复：预估不可信任客户端被压低的 expectedCredits —— 否则可绕过 402 门禁、
+    // 先调上游烧掉 L0 额度再在实扣时 402。服务端 defaultEstimate 作为下界，客户端值只能抬高。
+    int serverEstimate = defaultEstimate(uri, params, 12);
+    int estimate = expectedCredits != null ? Math.max(expectedCredits, serverEstimate) : serverEstimate;
     Integer balance = creditService.getBalance(userId);
     if (balance == null || balance < estimate) {
       throw new com.tang.common.core.exception.CustomException(
@@ -265,8 +268,11 @@ public class MarketingController {
         if (!isFreeUri(item.uri())
             && !(isWindowedUri(item.uri()) && entityIdOf(item.params()) != null
                 && recentConsumeExists(userId, endpointOf(item.uri()), entityIdOf(item.params())))) {
-            totalEstimate += item.expectedCredits() != null ? item.expectedCredits()
-                : defaultEstimate(item.uri(), item.params(), 7);
+            // B4 修复：同单条路径，客户端 expectedCredits 只能抬高服务端下界，不能压低
+            int itemServerEst = defaultEstimate(item.uri(), item.params(), 7);
+            int itemEst = item.expectedCredits() != null
+                ? Math.max(item.expectedCredits(), itemServerEst) : itemServerEst;
+            totalEstimate += itemEst;
         }
     }
     Integer balance = creditService.getBalance(userId);
@@ -440,9 +446,11 @@ public class MarketingController {
   private int getDailyLimit(Long userId) {
     UserSubscription sub = subscriptionRepository.findActiveByUser(userId);
     if (sub == null) return 5; // 无订阅用户
+    // B2 修复：库里套餐 code 是 sub_starter / sub_growth，原先 case "starter"/"growth"
+    // 全部落入 default → 付费用户被降级到 5 次/日。这里与库一致。
     return switch (sub.getPlanCode()) {
-      case "starter" -> 80;
-      case "growth" -> 200;
+      case "sub_starter" -> 80;
+      case "sub_growth" -> 200;
       default -> 5;
     };
   }

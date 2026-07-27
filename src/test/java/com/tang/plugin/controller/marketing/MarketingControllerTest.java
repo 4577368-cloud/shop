@@ -14,10 +14,18 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.tang.plugin.dto.billing.BillingDtos.CreditBucketBreakdown;
+import com.tang.plugin.dto.billing.BillingDtos.GrantCreditsRequest;
+import com.tang.plugin.dto.billing.BillingDtos.GrantCreditsResult;
+import com.tang.plugin.dto.billing.BillingDtos.MarketingChargeResult;
+import com.tang.plugin.service.billing.CreditService;
 
 /**
  * MarketingController smoke tests: URI whitelist, dossier size limit, reference enums,
@@ -36,6 +44,8 @@ class MarketingControllerTest {
     private JdbcTemplate jdbcTemplate;
     @Resource
     private JwtService jwtService;
+    @Resource
+    private CreditService creditService;
 
     private Cookie authCookie;
 
@@ -136,5 +146,78 @@ class MarketingControllerTest {
                         .content(body)
                         .cookie(authCookie))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ===== B6 商业化关键路径测试：402 门禁 / 一次领取 / capture→lot 幂等 / FIFO 扣减 =====
+
+    private Cookie authCookieFor(Long uid) {
+        String token = jwtService.generateAccessToken(uid, "test" + uid + "@example.com");
+        return new Cookie(CookieHelper.ACCESS_COOKIE, token);
+    }
+
+    @Test
+    void dataWithInsufficientCreditsReturns402() throws Exception {
+        // 全新用户（零余额）调用非免费端点：服务端门禁在调上游前返回 402（B4 + 402 门禁）。
+        Long uid = 9100L;
+        String body = "{\"uri\":\"/v3/api/open/store/list\",\"params\":{\"page\":1},\"expectedCredits\":5}";
+        mockMvc.perform(post("/api/plugin/marketing/data")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .cookie(authCookieFor(uid)))
+                .andExpect(status().is(402));
+    }
+
+    @Test
+    void welcomeClaimIsIdempotent() throws Exception {
+        // 欢迎分只能领取一次：首次 claimed=true，再次 alreadyClaimed=true，余额不重复增加（B3）。
+        Long uid = 9200L;
+        Cookie cookie = authCookieFor(uid);
+        mockMvc.perform(post("/api/plugin/billing/credits/welcome/claim").cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.claimed").value(true))
+                .andExpect(jsonPath("$.alreadyClaimed").value(false))
+                .andExpect(jsonPath("$.granted").value(30));
+
+        mockMvc.perform(post("/api/plugin/billing/credits/welcome/claim").cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.claimed").value(false))
+                .andExpect(jsonPath("$.alreadyClaimed").value(true))
+                .andExpect(jsonPath("$.balanceAfter").value(30));
+    }
+
+    @Test
+    void captureGrantsLotIdempotently() {
+        // capture→lot 幂等（B5）：同一 paymentOrderId 重复发放只产生一条批次与一条发放记录。
+        Long uid = 9002L;
+        Long orderId = 55501L;
+        GrantCreditsResult first = creditService.grantSubscriptionCredits(uid, "sub_starter", orderId);
+        GrantCreditsResult second = creditService.grantSubscriptionCredits(uid, "sub_starter", orderId);
+        assertTrue(first.success());
+        assertEquals(first.balanceAfter(), second.balanceAfter());
+
+        Integer grants = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM payment_credit_grants WHERE user_id = ? AND payment_order_id = ?",
+                Integer.class, uid, orderId);
+        Integer lots = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM credit_lots WHERE user_id = ? AND source_type = 'sub_starter'",
+                Integer.class, uid);
+        assertEquals(Integer.valueOf(1), grants);
+        assertEquals(Integer.valueOf(1), lots);
+    }
+
+    @Test
+    void fifoConsumeDrainsPromoBeforeSubscription() {
+        // FIFO 扣减顺序：promo 优先于 subscription（§4.3）。
+        Long uid = 9003L;
+        creditService.grantCredits(uid, new GrantCreditsRequest(5, "promo", null, null, "seed-promo"));
+        creditService.grantCredits(uid, new GrantCreditsRequest(10, "subscription", null, null, "seed-sub"));
+        // 实扣 = upstreamU × 2 = 12，跨越 promo(5) 与 subscription(10)。
+        MarketingChargeResult charge = creditService.chargeMarketingCall(
+                uid, 6, "/v3/api/open/store/list", "fifo-test-key", "endpoint", "ref");
+        assertEquals("promo", charge.bucket());
+
+        CreditBucketBreakdown bd = creditService.getBucketBreakdown(uid);
+        assertEquals(0, bd.promoCredits());        // promo 被完全扣光
+        assertEquals(3, bd.subscriptionCredits());  // subscription 仅扣 7，剩 3
     }
 }

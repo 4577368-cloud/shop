@@ -40,18 +40,19 @@ public class UserDailyUsageRepository {
      */
     public int incrementToday(Long userId) {
         LocalDate today = LocalDate.now();
-        // PostgreSQL UPSERT
-        int updated = jdbcTemplate.update(
-                """
-                INSERT INTO user_daily_usage (user_id, usage_date, call_count, created_at, updated_at)
-                VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id, usage_date) DO UPDATE
-                    SET call_count = user_daily_usage.call_count + 1,
-                        updated_at = CURRENT_TIMESTAMP
-                """,
-                userId, Date.valueOf(today));
-        if (updated == 0) {
-            // H2 兼容回退
+        try {
+            // PostgreSQL UPSERT（生产路径，原生原子）
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO user_daily_usage (user_id, usage_date, call_count, created_at, updated_at)
+                    VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, usage_date) DO UPDATE
+                        SET call_count = user_daily_usage.call_count + 1,
+                            updated_at = CURRENT_TIMESTAMP
+                    """,
+                    userId, Date.valueOf(today));
+        } catch (org.springframework.dao.DataAccessException e) {
+            // H2 / 非 PostgreSQL 回退：MERGE INTO（H2 不支持 ON CONFLICT 语法）
             jdbcTemplate.update(
                     """
                     MERGE INTO user_daily_usage (user_id, usage_date, call_count, created_at, updated_at)

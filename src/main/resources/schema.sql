@@ -868,6 +868,19 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user ON user_subscriptions (user_id, status);
 
+-- 支付订单→积分发放幂等表（B5 修复）。同一 payment_order_id 只允许发放一次。
+-- 月订 / 加购包捕获（含 webhook 自愈、前端重试）先查此表，命中即跳过，避免重复发整包。
+CREATE TABLE IF NOT EXISTS payment_credit_grants (
+    payment_order_id    BIGINT        NOT NULL PRIMARY KEY,   -- 支付订单 id（payment_orders.id）
+    user_id             BIGINT        NOT NULL,
+    kind                VARCHAR(20)   NOT NULL,               -- subscription | credit_pack
+    code                VARCHAR(40)   NOT NULL,               -- 套餐/包 code
+    granted_credits     INT           NOT NULL,               -- 实际发放积分
+    balance_after       INT           NOT NULL,               -- 发放后钱包余额
+    created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_payment_credit_grants_user ON payment_credit_grants (user_id);
+
 -- 种子数据（§3 定稿数字；幂等）。promo_until 置空以便 H2/PG 可移植；上线促销由运维写截止时间。
 INSERT INTO subscription_plans (code, name, price_usd_cents, credits_normal, credits_promo, promo_until, duration_days, sort_order, active)
 SELECT 'sub_starter', 'Starter', 2990, 1200, 1600, NULL, 30, 1, TRUE

@@ -3,6 +3,7 @@ package com.tang.plugin.service.billing;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.entity.user.CreditLot;
 import com.tang.plugin.domain.entity.user.CreditTransaction;
+import com.tang.plugin.domain.entity.user.PaymentCreditGrant;
 import com.tang.plugin.domain.entity.user.SubscriptionPlan;
 import com.tang.plugin.domain.entity.user.CreditPackage;
 import com.tang.plugin.domain.entity.user.UserCredit;
@@ -26,13 +27,19 @@ import com.tang.plugin.repository.CreditPackageRepository;
 import com.tang.plugin.repository.SubscriptionPlanRepository;
 import com.tang.plugin.repository.UserCreditRepository;
 import com.tang.plugin.repository.UserSubscriptionRepository;
+import com.tang.plugin.repository.PaymentCreditGrantRepository;
 import com.tang.plugin.repository.UserWelcomeClaimRepository;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -76,6 +83,9 @@ public class CreditService {
 
     @Resource
     private UserWelcomeClaimRepository welcomeClaimRepository;
+
+    @Resource
+    private PaymentCreditGrantRepository paymentGrantRepository;
 
     @Resource
     private SubscriptionPlanRepository planRepository;
@@ -455,12 +465,19 @@ public class CreditService {
      * 领取欢迎分（§4.2）。幂等：已领取返回 alreadyClaimed=true 且不重复发放。
      */
     public WelcomeClaimResponse claimWelcome(Long userId) {
-        boolean inserted = welcomeClaimRepository.insertIfAbsent(userId);
-        if (!inserted) {
-            return new WelcomeClaimResponse(false, true, 0, getBalance(userId));
-        }
-        Instant expires = Instant.now().plus(java.time.Duration.ofDays(90));
+        // B3 修复：领取标记与发放必须在同一事务内。
+        // 原实现先 insertIfAbsent 再开事务发放；若发放抛异常，claim 标记已落库但余额 0，
+        // 下次调用直接 alreadyClaimed → 永久锁死。改为事务内统一提交/回滚。
+        boolean[] alreadyClaimed = {false};
+        Integer[] balanceHolder = {0};
         transactionTemplate.executeWithoutResult(status -> {
+            ensureAccount(userId);
+            boolean inserted = welcomeClaimRepository.insertIfAbsent(userId);
+            if (!inserted) {
+                alreadyClaimed[0] = true;
+                return;
+            }
+            Instant expires = Instant.now().plus(Duration.ofDays(90));
             CreditLot lot = new CreditLot()
                     .setUserId(userId)
                     .setSourceType("welcome")
@@ -483,63 +500,57 @@ public class CreditService {
                     .setBucket("welcome")
                     .setRemark("welcome bonus");
             txnRepository.insert(txn);
+            balanceHolder[0] = after.getBalanceCredits();
         });
+        if (alreadyClaimed[0]) {
+            return new WelcomeClaimResponse(false, true, 0, getBalance(userId));
+        }
         log.info("Welcome credits claimed: userId={} granted={}", userId, WELCOME_CREDITS);
-        return new WelcomeClaimResponse(true, false, WELCOME_CREDITS, getBalance(userId));
+        return new WelcomeClaimResponse(true, false, WELCOME_CREDITS, balanceHolder[0]);
     }
 
-    /** 月订捕获后发放积分（§5 / D5）。 */
+    /**
+     * 月订捕获后发放积分（§5 / D5）。
+     * B5 修复：同一 paymentOrderId 幂等，webhook 自愈 / 前端重试不会重复发整包。
+     * 先查 payment_credit_grants，命中直接返回已发放结果；否则在单事务内完成
+     * 「写订阅 + 批次 + 调余额 + 流水 + 幂等记录」。幂等记录插入冲突则整体回滚并走幂等返回。
+     */
     public GrantCreditsResult grantSubscriptionCredits(Long userId, String planCode, Long paymentOrderId) {
+        PaymentCreditGrant prior = paymentGrantRepository.findByPaymentOrderId(paymentOrderId);
+        if (prior != null) {
+            log.info("Subscription grant idempotent skip: userId={} paymentOrderId={} granted={}",
+                    userId, paymentOrderId, prior.getGrantedCredits());
+            return idempotentGrantResult(prior);
+        }
+        ensureAccount(userId);
         SubscriptionPlan plan = planRepository.findByCode(planCode);
         if (plan == null) {
             throw new CustomException("Unknown plan: " + planCode, 400, "UNKNOWN_PLAN");
         }
         boolean promo = plan.getPromoUntil() != null && plan.getPromoUntil().isAfter(Instant.now());
         int credits = promo ? plan.getCreditsPromo() : plan.getCreditsNormal();
-        Instant expires = Instant.now().plus(java.time.Duration.ofDays(plan.getDurationDays()));
-        grantLot(userId, planCode, credits, expires, "subscription");
-        UserSubscription sub = new UserSubscription()
-                .setUserId(userId)
-                .setPlanCode(planCode)
-                .setPaymentOrderId(paymentOrderId)
-                .setStatus("active")
-                .setCreditsGranted(credits)
-                .setStartedAt(Instant.now())
-                .setEndsAt(expires);
-        subscriptionRepository.insert(sub);
-        log.info("Subscription credits granted: userId={} plan={} credits={} promo={}",
-                userId, planCode, credits, promo);
-        return new GrantCreditsResult(true, getBalance(userId), null, null, credits);
-    }
-
-    /** 加购包捕获后发放积分（§5 / D5）。 */
-    public GrantCreditsResult grantPackCredits(Long userId, String packageCode, Long paymentOrderId) {
-        CreditPackage pkg = packRepository.findByCode(packageCode);
-        if (pkg == null) {
-            throw new CustomException("Unknown package: " + packageCode, 400, "UNKNOWN_PACKAGE");
-        }
-        boolean promo = pkg.getPromoUntil() != null && pkg.getPromoUntil().isAfter(Instant.now());
-        int credits = promo ? pkg.getCreditsPromo() : pkg.getCreditsNormal();
-        Instant expires = Instant.now().plus(java.time.Duration.ofDays(pkg.getDurationDays()));
-        grantLot(userId, packageCode, credits, expires, "credit_pack");
-        log.info("Pack credits granted: userId={} package={} credits={} promo={}",
-                userId, packageCode, credits, promo);
-        return new GrantCreditsResult(true, getBalance(userId), null, null, credits);
-    }
-
-    // ===== Helpers =====
-
-    private void grantLot(Long userId, String sourceType, int credits, Instant expiresAt, String bucket) {
-        ensureAccount(userId);
-        transactionTemplate.executeWithoutResult(status -> {
+        Instant expires = Instant.now().plus(Duration.ofDays(plan.getDurationDays()));
+        Integer balanceAfter = transactionTemplate.execute(status -> {
+            UserSubscription sub = new UserSubscription()
+                    .setUserId(userId)
+                    .setPlanCode(planCode)
+                    .setPaymentOrderId(paymentOrderId)
+                    .setStatus("active")
+                    .setCreditsGranted(credits)
+                    .setStartedAt(Instant.now())
+                    .setEndsAt(expires);
+            subscriptionRepository.insert(sub);
             CreditLot lot = new CreditLot()
                     .setUserId(userId)
-                    .setSourceType(sourceType)
-                    .setSourceId(null)
+                    .setSourceType(planCode)
+                    .setSourceId(sub.getId())
                     .setAmountGranted(credits)
-                    .setExpiresAt(expiresAt);
+                    .setExpiresAt(expires);
             lotRepository.insert(lot);
-            creditAccountRepository.addCredits(userId, credits);
+            int adjusted = creditAccountRepository.addCredits(userId, credits);
+            if (adjusted == 0) {
+                throw new IllegalStateException("addCredits affected 0 rows for userId=" + userId);
+            }
             UserCredit after = creditAccountRepository.findByUserId(userId)
                     .orElseThrow(() -> new IllegalStateException("Account disappeared"));
             Integer balanceBefore = after.getBalanceCredits() - credits;
@@ -549,12 +560,97 @@ public class CreditService {
                     .setAmount(credits)
                     .setBalanceBefore(balanceBefore)
                     .setBalanceAfter(after.getBalanceCredits())
-                    .setRefType(sourceType)
-                    .setRefId(null)
-                    .setBucket(bucket)
-                    .setRemark("grant " + sourceType);
+                    .setRefType("subscription")
+                    .setRefId(planCode)
+                    .setBucket("subscription")
+                    .setRemark("grant " + planCode);
             txnRepository.insert(txn);
+            // 幂等落地：与发放同事务。并发 PK 冲突 → insert 返回 false → 整体回滚，调用方重试走幂等返回
+            boolean inserted = paymentGrantRepository.insert(
+                    paymentOrderId, userId, "subscription", planCode, credits, after.getBalanceCredits());
+            if (!inserted) {
+                status.setRollbackOnly();
+                return null;
+            }
+            return after.getBalanceCredits();
         });
+        if (balanceAfter == null) {
+            PaymentCreditGrant again = paymentGrantRepository.findByPaymentOrderId(paymentOrderId);
+            if (again != null) {
+                return idempotentGrantResult(again);
+            }
+        }
+        log.info("Subscription credits granted: userId={} plan={} credits={} promo={}",
+                userId, planCode, credits, promo);
+        return new GrantCreditsResult(true, balanceAfter, null, null, credits);
+    }
+
+    /** 加购包捕获后发放积分（§5 / D5）。B5 幂等同 grantSubscriptionCredits。 */
+    public GrantCreditsResult grantPackCredits(Long userId, String packageCode, Long paymentOrderId) {
+        PaymentCreditGrant prior = paymentGrantRepository.findByPaymentOrderId(paymentOrderId);
+        if (prior != null) {
+            log.info("Pack grant idempotent skip: userId={} paymentOrderId={} granted={}",
+                    userId, paymentOrderId, prior.getGrantedCredits());
+            return idempotentGrantResult(prior);
+        }
+        ensureAccount(userId);
+        CreditPackage pkg = packRepository.findByCode(packageCode);
+        if (pkg == null) {
+            throw new CustomException("Unknown package: " + packageCode, 400, "UNKNOWN_PACKAGE");
+        }
+        boolean promo = pkg.getPromoUntil() != null && pkg.getPromoUntil().isAfter(Instant.now());
+        int credits = promo ? pkg.getCreditsPromo() : pkg.getCreditsNormal();
+        Instant expires = Instant.now().plus(Duration.ofDays(pkg.getDurationDays()));
+        Integer balanceAfter = transactionTemplate.execute(status -> {
+            CreditLot lot = new CreditLot()
+                    .setUserId(userId)
+                    .setSourceType(packageCode)
+                    .setSourceId(null)
+                    .setAmountGranted(credits)
+                    .setExpiresAt(expires);
+            lotRepository.insert(lot);
+            int adjusted = creditAccountRepository.addCredits(userId, credits);
+            if (adjusted == 0) {
+                throw new IllegalStateException("addCredits affected 0 rows for userId=" + userId);
+            }
+            UserCredit after = creditAccountRepository.findByUserId(userId)
+                    .orElseThrow(() -> new IllegalStateException("Account disappeared"));
+            Integer balanceBefore = after.getBalanceCredits() - credits;
+            CreditTransaction txn = new CreditTransaction()
+                    .setUserId(userId)
+                    .setType("grant")
+                    .setAmount(credits)
+                    .setBalanceBefore(balanceBefore)
+                    .setBalanceAfter(after.getBalanceCredits())
+                    .setRefType("credit_pack")
+                    .setRefId(packageCode)
+                    .setBucket("credit_pack")
+                    .setRemark("grant " + packageCode);
+            txnRepository.insert(txn);
+            boolean inserted = paymentGrantRepository.insert(
+                    paymentOrderId, userId, "credit_pack", packageCode, credits, after.getBalanceCredits());
+            if (!inserted) {
+                status.setRollbackOnly();
+                return null;
+            }
+            return after.getBalanceCredits();
+        });
+        if (balanceAfter == null) {
+            PaymentCreditGrant again = paymentGrantRepository.findByPaymentOrderId(paymentOrderId);
+            if (again != null) {
+                return idempotentGrantResult(again);
+            }
+        }
+        log.info("Pack credits granted: userId={} package={} credits={} promo={}",
+                userId, packageCode, credits, promo);
+        return new GrantCreditsResult(true, balanceAfter, null, null, credits);
+    }
+
+    // ===== Helpers =====
+
+    /** 幂等命中时，返回初次发放的结果（不再发分）。 */
+    private GrantCreditsResult idempotentGrantResult(PaymentCreditGrant prior) {
+        return new GrantCreditsResult(true, prior.getBalanceAfter(), null, null, prior.getGrantedCredits());
     }
 
     private String toBucket(String sourceType) {
@@ -570,6 +666,21 @@ public class CreditService {
 
     private String buildIdempotencyKey(Long userId, String uri, String cacheKey) {
         String day = java.time.LocalDate.now().toString(); // yyyy-MM-dd
-        return userId + "|" + (uri == null ? "" : uri) + "|" + (cacheKey == null ? "" : cacheKey) + "|" + day;
+        String raw = userId + "|" + (uri == null ? "" : uri) + "|"
+                + (cacheKey == null ? "" : cacheKey) + "|" + day;
+        // B1 修复：长 uri / cacheKey 拼接可能超过 VARCHAR(64)，写流水会炸。
+        // 改为 SHA-256 摘要，固定 64 位十六进制，永不超过列宽；碰撞概率可忽略。
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(raw.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // 兜底：SHA-256 必然存在，极端环境才走到这里，截断到 64 字符
+            return raw.length() > 64 ? raw.substring(0, 64) : raw;
+        }
     }
 }
