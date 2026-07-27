@@ -2,6 +2,8 @@ package com.tang.plugin.controller.billing;
 
 import com.tang.plugin.dto.billing.BillingDtos;
 import com.tang.plugin.dto.billing.BillingDtos.AccountOverview;
+import com.tang.plugin.dto.billing.BillingDtos.GrantSubscriptionRequest;
+import com.tang.plugin.dto.billing.BillingDtos.GrantSubscriptionResult;
 import com.tang.plugin.dto.billing.BillingDtos.CapturePayPalOrderResponse;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeBalanceRequest;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeResult;
@@ -85,6 +87,22 @@ public class BillingController {
         Long userId = currentUserId(httpRequest);
         adminGuard.assertAdmin(userId);
         return ResponseEntity.ok(billingService.recharge(userId, req));
+    }
+
+    /**
+     * 测试用：为账号发放订阅（绕过 PayPal 流程）。admin 守卫。
+     * 用于联调阶段解封日调用上限（匿名 5 / Starter 80 / Growth 200）。
+     * targetUserId 省略时发放给当前登录用户；指定时仅管理员可为他人发放。
+     * 生产接入支付后应下线，或保留为内部运维工具。
+     */
+    @PostMapping("/admin/grant-subscription")
+    public ResponseEntity<GrantSubscriptionResult> grantSubscription(
+            HttpServletRequest httpRequest,
+            @RequestBody GrantSubscriptionRequest req) {
+        Long caller = currentUserId(httpRequest);
+        adminGuard.assertAdmin(caller);
+        Long target = (req.targetUserId() != null) ? req.targetUserId() : caller;
+        return ResponseEntity.ok(billingService.grantSubscription(target, req.planCode()));
     }
 
     // ===== PayPal (P3.2) =====

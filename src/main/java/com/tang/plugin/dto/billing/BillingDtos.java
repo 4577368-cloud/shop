@@ -182,6 +182,24 @@ public final class BillingDtos {
             Integer grantedCredits
     ) {}
 
+    /**
+     * 测试用：为账号发放订阅（绕过 PayPal 流程）。admin 守卫。
+     * 用于联调阶段解封日调用上限（匿名 5 / Starter 80 / Growth 200）。
+     * 生产接入支付后应下线，或保留为内部运维工具。
+     */
+    public record GrantSubscriptionRequest(
+            String planCode,      // sub_starter / sub_growth
+            Long targetUserId     // 可选；为空则发放给当前登录用户
+    ) {}
+
+    /** 发放订阅结果。 */
+    public record GrantSubscriptionResult(
+            boolean success,
+            Long userId,
+            String planCode,
+            java.time.Instant endsAt
+    ) {}
+
     public record CreditTransactionItem(
             Long id,
             String type,

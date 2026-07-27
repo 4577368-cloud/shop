@@ -25,7 +25,12 @@ import com.tang.plugin.repository.AccountTransactionRepository;
 import com.tang.plugin.repository.CreditPackageRepository;
 import com.tang.plugin.repository.PaymentOrderRepository;
 import com.tang.plugin.repository.SubscriptionPlanRepository;
+import com.tang.plugin.domain.entity.user.UserSubscription;
 import com.tang.plugin.repository.UserAccountRepository;
+import com.tang.plugin.repository.UserSubscriptionRepository;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -51,6 +56,9 @@ public class BillingService {
 
     @Resource
     private UserAccountRepository accountRepository;
+
+    @Resource
+    private UserSubscriptionRepository subscriptionRepository;
 
     @Resource
     private AccountTransactionRepository txnRepository;
@@ -812,6 +820,28 @@ public class BillingService {
         log.info("Webhook self-healed order payment: paypalOrderId={} shopifyOrder={}",
                 order.getPaypalOrderId(), order.getRefId());
         return new WebhookHandleResult(true, "HEALED_ORDER_PAYMENT", order.getPaypalOrderId());
+    }
+
+    /**
+     * 测试用：为指定用户发放有效订阅（绕过支付流程）。
+     * 用于联调阶段解封日调用上限（匿名 5 / Starter 80 / Growth 200）。
+     * 生产接入支付后应下线，或保留为内部运维工具。
+     */
+    public BillingDtos.GrantSubscriptionResult grantSubscription(Long userId, String planCode) {
+        if (planCode == null || planCode.isBlank()) {
+            planCode = "sub_growth";
+        }
+        Instant now = Instant.now();
+        Instant endsAt = now.plus(365, ChronoUnit.DAYS);
+        UserSubscription sub = new UserSubscription()
+                .setUserId(userId)
+                .setPlanCode(planCode)
+                .setStatus("active")
+                .setCreditsGranted(0)
+                .setStartedAt(now)
+                .setEndsAt(endsAt);
+        subscriptionRepository.insert(sub);
+        return new BillingDtos.GrantSubscriptionResult(true, userId, planCode, endsAt);
     }
 
     /** Webhook 处理结果。controller 始终返回 200，但 result 用于日志和监控。 */
