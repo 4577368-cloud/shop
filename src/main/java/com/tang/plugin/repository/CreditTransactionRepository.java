@@ -33,6 +33,7 @@ public class CreditTransactionRepository {
                 .setRemark(rs.getString("remark"))
                 .setIdempotencyKey(rs.getString("idempotency_key"))
                 .setBucket(rs.getString("bucket"))
+                .setBucketsJson(rs.getString("buckets_json"))
                 .setUpstreamCredits(rs.getObject("upstream_credits") != null ? rs.getInt("upstream_credits") : null);
         Timestamp created = rs.getTimestamp("created_at");
         t.setCreatedAt(created != null ? created.toInstant() : null);
@@ -46,8 +47,8 @@ public class CreditTransactionRepository {
         String sql = """
                 INSERT INTO credit_transactions (user_id, type, amount, balance_before, balance_after,
                                                  ref_type, ref_id, endpoint, remark, idempotency_key,
-                                                 bucket, upstream_credits, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                 bucket, buckets_json, upstream_credits, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         KeyHolder keyHolder = new GeneratedKeyHolder();
         Instant now = txn.getCreatedAt() != null ? txn.getCreatedAt() : Instant.now();
@@ -64,12 +65,13 @@ public class CreditTransactionRepository {
             ps.setString(9, txn.getRemark());
             ps.setString(10, txn.getIdempotencyKey());
             ps.setString(11, txn.getBucket());
+            ps.setString(12, txn.getBucketsJson());
             if (txn.getUpstreamCredits() != null) {
-                ps.setInt(12, txn.getUpstreamCredits());
+                ps.setInt(13, txn.getUpstreamCredits());
             } else {
-                ps.setNull(12, java.sql.Types.INTEGER);
+                ps.setNull(13, java.sql.Types.INTEGER);
             }
-            ps.setTimestamp(13, Timestamp.from(now));
+            ps.setTimestamp(14, Timestamp.from(now));
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
@@ -91,7 +93,8 @@ public class CreditTransactionRepository {
             return jdbcTemplate.queryForObject(
                     """
                     SELECT id, user_id, type, amount, balance_before, balance_after,
-                           ref_type, ref_id, endpoint, remark, idempotency_key, created_at
+                           ref_type, ref_id, endpoint, remark, idempotency_key,
+                           bucket, buckets_json, upstream_credits, created_at
                     FROM credit_transactions
                     WHERE user_id = ? AND idempotency_key = ?
                     LIMIT 1
@@ -115,7 +118,7 @@ public class CreditTransactionRepository {
             return jdbcTemplate.query(
                     """
                     SELECT id, user_id, type, amount, balance_before, balance_after,
-                           ref_type, ref_id, endpoint, remark, idempotency_key, bucket, upstream_credits, created_at
+                           ref_type, ref_id, endpoint, remark, idempotency_key, bucket, buckets_json, upstream_credits, created_at
                     FROM credit_transactions
                     WHERE user_id = ?
                     ORDER BY created_at DESC, id DESC
@@ -127,7 +130,7 @@ public class CreditTransactionRepository {
         return jdbcTemplate.query(
                 """
                 SELECT id, user_id, type, amount, balance_before, balance_after,
-                       ref_type, ref_id, endpoint, remark, idempotency_key, bucket, upstream_credits, created_at
+                       ref_type, ref_id, endpoint, remark, idempotency_key, bucket, buckets_json, upstream_credits, created_at
                 FROM credit_transactions
                 WHERE user_id = ? AND type = ?
                 ORDER BY created_at DESC, id DESC
@@ -163,7 +166,7 @@ public class CreditTransactionRepository {
             return jdbcTemplate.queryForObject(
                     """
                     SELECT id, user_id, type, amount, balance_before, balance_after,
-                           ref_type, ref_id, endpoint, remark, idempotency_key, bucket, upstream_credits, created_at
+                           ref_type, ref_id, endpoint, remark, idempotency_key, bucket, buckets_json, upstream_credits, created_at
                     FROM credit_transactions
                     WHERE user_id = ? AND type = 'consume' AND endpoint = ? AND created_at >= ?
                       AND (? IS NULL OR ref_id = ?)

@@ -11,6 +11,9 @@ import com.tang.plugin.service.marketing.CompetitorStoreService;
 import com.tang.plugin.service.marketing.PipispyClient;
 import com.tang.plugin.service.billing.CreditService;
 import com.tang.plugin.repository.CreditTransactionRepository;
+import com.tang.plugin.repository.UserDailyUsageRepository;
+import com.tang.plugin.repository.UserSubscriptionRepository;
+import com.tang.plugin.domain.entity.user.UserSubscription;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -73,6 +76,8 @@ public class MarketingController {
     private final CompetitorStoreService competitorStoreService;
     private final CreditService creditService;
     private final CreditTransactionRepository txnRepository;
+    private final UserDailyUsageRepository dailyUsageRepository;
+    private final UserSubscriptionRepository subscriptionRepository;
 
   @PostMapping("/data")
   public ResponseEntity<MarketingDataResponse> postData(
@@ -126,6 +131,9 @@ public class MarketingController {
       if (res.ok()) res = withBilling(res, 0, creditService.getBalance(userId), true);
       return res;
     }
+
+    // 2.5) 日调用上限检查（§2.1）
+    assertDailyLimit(userId);
 
     // 3) 预估 assert（防浪费上游额度）
     int estimate = expectedCredits != null ? expectedCredits : defaultEstimate(uri, params, 12);
@@ -247,6 +255,9 @@ public class MarketingController {
     for (DossierRequestItem item : items) {
         assertAllowedUri(item.uri());
     }
+
+    // 日调用上限检查（§2.1）—— dossier 算 1 次
+    assertDailyLimit(userId);
 
     // 总预估（免费/窗口 item 不计入）
     int totalEstimate = 0;
@@ -375,7 +386,8 @@ public class MarketingController {
   /** 预估用户积分（= 上游 U × 2 的下界估计）。 */
   private int defaultEstimate(String uri, Map<String, Object> params, int defaultPageSize) {
     if (uri != null && uri.contains("ai-search/image")) return 6;
-    if (isWindowedUri(uri)) return 2;
+    // 定稿 §2.2：档案扇出 U≤7 → 收 ≤14。预估取上界避免 assert 通过但实扣 402。
+    if (isWindowedUri(uri)) return 14;
     int pageSize = defaultPageSize;
     if (params != null) {
       Object ps = params.get("pageSize");
@@ -405,6 +417,34 @@ public class MarketingController {
   private boolean recentConsumeExists(Long userId, String endpoint, String entityId) {
     return txnRepository.findRecentConsume(userId, endpoint, entityId,
         Instant.now().minus(3, ChronoUnit.DAYS)) != null;
+  }
+
+  /**
+   * 日调用上限检查（§2.1）。
+   * Starter 80次/日、Growth 200次/日、无订阅 5次/日。
+   * 超额抛 429 DAILY_LIMIT_EXCEEDED。
+   */
+  private void assertDailyLimit(Long userId) {
+    int todayCount = dailyUsageRepository.getTodayCount(userId);
+    int limit = getDailyLimit(userId);
+    if (todayCount >= limit) {
+      log.warn("Daily limit exceeded: userId={} count={} limit={}", userId, todayCount, limit);
+      throw new com.tang.common.core.exception.CustomException(
+          "Daily API call limit reached (" + todayCount + "/" + limit + "). Upgrade your plan for more calls.",
+          429, "DAILY_LIMIT_EXCEEDED");
+    }
+    dailyUsageRepository.incrementToday(userId);
+  }
+
+  /** 根据用户订阅等级返回日调用上限。 */
+  private int getDailyLimit(Long userId) {
+    UserSubscription sub = subscriptionRepository.findActiveByUser(userId);
+    if (sub == null) return 5; // 无订阅用户
+    return switch (sub.getPlanCode()) {
+      case "starter" -> 80;
+      case "growth" -> 200;
+      default -> 5;
+    };
   }
 
   private void assertAllowedUri(String uri) {

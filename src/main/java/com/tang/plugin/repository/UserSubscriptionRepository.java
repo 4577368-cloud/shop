@@ -42,6 +42,50 @@ public class UserSubscriptionRepository {
     @Resource
     private JdbcTemplate jdbcTemplate;
 
+    /**
+     * 查找用户当前有效的订阅（status=active 且未过期）。
+     * 用于日调用上限判定（§2.1）。
+     */
+    public UserSubscription findActiveByUser(Long userId) {
+        try {
+            return jdbcTemplate.queryForObject(
+                    """
+                    SELECT id, user_id, plan_code, payment_order_id, status, credits_granted,
+                           started_at, ends_at, created_at, updated_at
+                    FROM user_subscriptions
+                    WHERE user_id = ? AND status = 'active' AND ends_at > ?
+                    ORDER BY ends_at DESC
+                    LIMIT 1
+                    """,
+                    ROW_MAPPER, userId, Timestamp.from(Instant.now()));
+        } catch (org.springframework.dao.EmptyResultDataAccessException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 查找所有 active 订阅（用于过期定时任务）。
+     */
+    public java.util.List<UserSubscription> findAllActive() {
+        return jdbcTemplate.query(
+                """
+                SELECT id, user_id, plan_code, payment_order_id, status, credits_granted,
+                       started_at, ends_at, created_at, updated_at
+                FROM user_subscriptions
+                WHERE status = 'active'
+                """,
+                ROW_MAPPER);
+    }
+
+    /**
+     * 标记订阅为已过期。
+     */
+    public void markExpired(Long subId) {
+        jdbcTemplate.update(
+                "UPDATE user_subscriptions SET status = 'expired', updated_at = ? WHERE id = ?",
+                Timestamp.from(Instant.now()), subId);
+    }
+
     public UserSubscription insert(UserSubscription sub) {
         Instant now = Instant.now();
         String sql = """

@@ -303,7 +303,7 @@ public class CreditService {
                         t.getId(), t.getType(), t.getAmount(),
                         t.getBalanceBefore(), t.getBalanceAfter(),
                         t.getRefType(), t.getRefId(), t.getEndpoint(), t.getRemark(),
-                        t.getIdempotencyKey(), t.getBucket(), t.getUpstreamCredits(),
+                        t.getIdempotencyKey(), t.getBucket(), t.getBucketsJson(), t.getUpstreamCredits(),
                         t.getCreatedAt()))
                 .collect(Collectors.toList());
         return new CreditTransactionListResponse(items, total, limit, offset);
@@ -385,6 +385,7 @@ public class CreditService {
         Integer[] balanceAfterHolder = new Integer[]{null};
         Long[] txnIdHolder = new Long[]{null};
         String[] bucketHolder = new String[]{null};
+        String[] bucketsJsonHolder = new String[]{null};
 
         transactionTemplate.executeWithoutResult(status -> {
             int updated = creditAccountRepository.tryConsume(userId, amount);
@@ -393,18 +394,33 @@ public class CreditService {
             }
             int remainingToConsume = amount;
             List<CreditLot> lots = lotRepository.listConsumable(userId);
+            // 收集跨桶扣减路径：[{bucket, amount}, ...]
+            java.util.List<java.util.Map<String, Object>> walkPath = new java.util.ArrayList<>();
             for (CreditLot lot : lots) {
                 if (remainingToConsume <= 0) break;
                 int consumed = lotRepository.consumeFromLot(lot.getId(), remainingToConsume);
-                if (consumed > 0 && bucketHolder[0] == null) {
-                    bucketHolder[0] = toBucket(lot.getSourceType());
+                if (consumed > 0) {
+                    String bucket = toBucket(lot.getSourceType());
+                    if (bucketHolder[0] == null) {
+                        bucketHolder[0] = bucket;
+                    }
+                    walkPath.add(java.util.Map.of("bucket", bucket, "amount", consumed));
+                    remainingToConsume -= consumed;
                 }
-                remainingToConsume -= consumed;
             }
             if (remainingToConsume > 0) {
                 log.error("Credit lot total < account balance after consume: userId={} amount={} missing={}",
                         userId, amount, remainingToConsume);
                 throw new IllegalStateException("Credit lot inconsistency for userId=" + userId);
+            }
+            // 跨桶时写完整路径 JSON；单桶时留 null（bucket 字段已足够）
+            if (walkPath.size() > 1) {
+                try {
+                    bucketsJsonHolder[0] = new com.fasterxml.jackson.databind.ObjectMapper()
+                            .writeValueAsString(walkPath);
+                } catch (Exception e) {
+                    log.warn("Failed to serialize walkPath for userId={}", userId, e);
+                }
             }
             UserCredit after = creditAccountRepository.findByUserId(userId)
                     .orElseThrow(() -> new IllegalStateException("Account disappeared"));
@@ -421,6 +437,7 @@ public class CreditService {
                     .setEndpoint(endpoint)
                     .setIdempotencyKey(idemKey)
                     .setBucket(bucketHolder[0])
+                    .setBucketsJson(bucketsJsonHolder[0])
                     .setUpstreamCredits(upstreamU)
                     .setRemark("uri=" + uri);
             txnRepository.insert(txn);

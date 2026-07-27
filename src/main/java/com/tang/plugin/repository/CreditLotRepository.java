@@ -170,7 +170,7 @@ public class CreditLotRepository {
 
     /**
      * 批量过期：把所有已过期但未标记 expired 的批次余额置为 expired。
-     * 由定时任务调用（P7 阶段）。返回受影响行数。
+     * 由定时任务调用。返回受影响行数。
      */
     public int expireOverdueLots(Long userId) {
         return jdbcTemplate.update(
@@ -184,6 +184,35 @@ public class CreditLotRepository {
                   AND amount_expired < amount_granted - amount_consumed
                 """,
                 userId, Timestamp.from(Instant.now()));
+    }
+
+    /**
+     * 查找有即将过期/已过期批次的所有用户 ID（用于定时任务遍历）。
+     */
+    public java.util.List<Long> findUserIdsWithExpiringLots() {
+        return jdbcTemplate.queryForList(
+                """
+                SELECT DISTINCT user_id FROM credit_lots
+                WHERE expires_at IS NOT NULL AND expires_at <= ?
+                  AND amount_expired < amount_granted - amount_consumed
+                """,
+                Long.class, Timestamp.from(Instant.now()));
+    }
+
+    /**
+     * 查询用户待过期的剩余积分总和（过期前快照，用于 deductExpired 前确定扣减量）。
+     */
+    public int sumExpiringRemaining(Long userId) {
+        Integer cnt = jdbcTemplate.queryForObject(
+                """
+                SELECT COALESCE(SUM(amount_granted - amount_consumed - amount_expired), 0)
+                FROM credit_lots
+                WHERE user_id = ?
+                  AND expires_at IS NOT NULL AND expires_at <= ?
+                  AND amount_expired < amount_granted - amount_consumed
+                """,
+                Integer.class, userId, Timestamp.from(Instant.now()));
+        return cnt != null ? cnt : 0;
     }
 
     /**

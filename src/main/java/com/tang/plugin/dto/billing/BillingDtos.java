@@ -194,6 +194,7 @@ public final class BillingDtos {
             String remark,
             String idempotencyKey,
             String bucket,
+            String bucketsJson,
             Integer upstreamCredits,
             java.time.Instant createdAt
     ) {}

@@ -151,4 +151,20 @@ public class UserCreditRepository {
                 """,
                 expiredDelta, Timestamp.from(Instant.now()), userId);
     }
+
+    /**
+     * 过期扣减：从 balance_credits 扣除过期部分，并累加 total_expired。
+     * 由定时任务调用，与 {@code CreditLotRepository.expireOverdueLots} 配合使用。
+     */
+    public int deductExpired(Long userId, int expiredAmount) {
+        return jdbcTemplate.update(
+                """
+                UPDATE user_credits
+                SET balance_credits = balance_credits - ?,
+                    total_expired = total_expired + ?,
+                    updated_at = ?
+                WHERE user_id = ? AND balance_credits >= ?
+                """,
+                expiredAmount, expiredAmount, Timestamp.from(Instant.now()), userId, expiredAmount);
+    }
 }

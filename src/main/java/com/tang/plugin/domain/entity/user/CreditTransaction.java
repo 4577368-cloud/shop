@@ -34,9 +34,15 @@ public class CreditTransaction {
     private String idempotencyKey;
     /**
      * 扣减桶（§4.1）：welcome(免费) / promo(促销) / subscription(月订) / credit_pack(加购) / manual。
-     * 一条扣费流水可能因跨桶而只记主桶；跨桶拆分见 {@code credit_transaction_buckets}（一期简化为单桶优先）。
+     * 记录主扣减桶（第一个被扣的桶）。跨桶完整路径见 {@link #bucketsJson}。
      */
     private String bucket;
+    /**
+     * 跨桶扣减路径 JSON（§4.3 ⚠️1 fix）。
+     * 格式：[{"bucket":"welcome","amount":12},{"bucket":"subscription","amount":2}]
+     * 仅 consume 类型且跨桶时有值；单桶扣减时为 null（bucket 字段已足够）。
+     */
+    private String bucketsJson;
     /**
      * 上游实际消耗 U（pipispy {@code consumed_credits}）。用户实扣 = U × 2。
      * 仅 marketing_api 消耗写入；发放/过期为 NULL。
