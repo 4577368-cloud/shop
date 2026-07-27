@@ -61,6 +61,7 @@ public class MarketingController {
             "/v3/api/open/ai-search/image/status",
             "/v3/api/open/ai-search/image/resultSummary",
             "/v3/api/open/adspy/list",
+            "/v3/api/open/adspy/detail",
             "/v3/api/open/ad-library/ads",
             "/v3/api/open/store/list",
             "/v3/api/open/store/ad-trend",
