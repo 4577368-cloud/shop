@@ -220,4 +220,56 @@ class MarketingControllerTest {
         assertEquals(0, bd.promoCredits());        // promo 被完全扣光
         assertEquals(3, bd.subscriptionCredits());  // subscription 仅扣 7，剩 3
     }
+
+    @Test
+    void dailyLimitUsesSubStarterPlanCode() throws Exception {
+        // G2：活跃 sub_starter 日限应为 80，不是错误码 starter 掉到 5。
+        Long uid = 9300L;
+        Cookie cookie = authCookieFor(uid);
+        creditService.grantSubscriptionCredits(uid, "sub_starter", 93001L);
+        // 灌入今日已用 5 次：若错误落到 default=5 会立刻 429；正确 80 则仍可通过余额门禁到上游/其他错误。
+        jdbcTemplate.update(
+                "INSERT INTO user_daily_usage (user_id, usage_date, call_count) VALUES (?, CURRENT_DATE, 5)",
+                uid);
+        // 给足够余额避免 402
+        creditService.grantCredits(uid, new GrantCreditsRequest(100, "manual", null, null, "seed"));
+        String body = "{\"uri\":\"/v3/api/open/store/list\",\"params\":{\"page\":1},\"expectedCredits\":1}";
+        // 不应因日限额 429（5/5）；可能因上游未配置返回 502/503，但绝不是 429
+        mockMvc.perform(post("/api/plugin/marketing/data")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .cookie(cookie))
+                .andExpect(result -> assertTrue(
+                        result.getResponse().getStatus() != 429,
+                        "sub_starter must not hit default daily limit of 5"));
+    }
+
+    @Test
+    void clientExpectedCreditsCannotUndercutServerFloor() throws Exception {
+        // G4：客户端 expectedCredits=1 不能压低服务端 pageSize×2 下界 → 仍 402。
+        Long uid = 9400L;
+        Cookie cookie = authCookieFor(uid);
+        // 余额 10 < 默认 pageSize 12 × 2 = 24
+        creditService.grantCredits(uid, new GrantCreditsRequest(10, "manual", null, null, "seed"));
+        String body = "{\"uri\":\"/v3/api/open/store/list\",\"params\":{},\"expectedCredits\":1}";
+        mockMvc.perform(post("/api/plugin/marketing/data")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body)
+                        .cookie(cookie))
+                .andExpect(status().is(402));
+    }
+
+    @Test
+    void welcomeStatusReflectsClaim() throws Exception {
+        Long uid = 9500L;
+        Cookie cookie = authCookieFor(uid);
+        mockMvc.perform(get("/api/plugin/billing/credits/welcome/status").cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.claimed").value(false));
+        mockMvc.perform(post("/api/plugin/billing/credits/welcome/claim").cookie(cookie))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/plugin/billing/credits/welcome/status").cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.claimed").value(true));
+    }
 }

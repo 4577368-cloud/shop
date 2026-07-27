@@ -253,6 +253,9 @@ public final class BillingDtos {
             Integer balanceAfter
     ) {}
 
+    /** GET /credits/welcome/status — 是否已领欢迎分（水合用，不发放）。 */
+    public record WelcomeStatusResponse(boolean claimed) {}
+
     /**
      * 双桶拆分（§4.5）：免费分 vs 付费分（月订+加购+促销）。
      * 顶栏 / UsageCard 共用此结构。

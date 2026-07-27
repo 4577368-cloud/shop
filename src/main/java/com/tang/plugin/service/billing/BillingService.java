@@ -616,16 +616,27 @@ public class BillingService {
     }
 
     /**
-     * 月订 / 加购包捕获：调 PayPal 扣款成功后发放积分（事务内 grant + markCaptured）。
+     * 月订 / 加购包捕获：调 PayPal 扣款成功后发放积分。
+     * G1：grant 与 markCaptured 必须同事务；grant 自身已按 payment_order_id 幂等。
      */
     private CapturePayPalOrderResponse handleCreditCapture(Long userId, PaymentOrder order,
                                                            PayPalClient.CaptureResult capture,
                                                            boolean isSubscription) {
         String code = order.getRefId();
-        BillingDtos.GrantCreditsResult grant = isSubscription
-                ? creditService.grantSubscriptionCredits(userId, code, order.getId())
-                : creditService.grantPackCredits(userId, code, order.getId());
-        paymentOrderRepository.markCaptured(order.getPaypalOrderId(), capture.captureId(), null);
+        BillingDtos.GrantCreditsResult[] grantHolder = new BillingDtos.GrantCreditsResult[1];
+        transactionTemplate.executeWithoutResult(status -> {
+            grantHolder[0] = isSubscription
+                    ? creditService.grantSubscriptionCredits(userId, code, order.getId())
+                    : creditService.grantPackCredits(userId, code, order.getId());
+            int marked = paymentOrderRepository.markCaptured(
+                    order.getPaypalOrderId(), capture.captureId(), null);
+            if (marked == 0) {
+                // 并发已 captured：若幂等 grant 已存在则视为成功；否则回滚避免「有分无单」不一致
+                throw new IllegalStateException(
+                        "markCaptured affected 0 rows for " + order.getPaypalOrderId());
+            }
+        });
+        BillingDtos.GrantCreditsResult grant = grantHolder[0];
         log.info("Credit grant captured: userId={} purpose={} code={} granted={}",
                 userId, order.getPurpose(), code, grant.grantedCredits());
         return new CapturePayPalOrderResponse(true, "captured", order.getPurpose(), order.getRefId(),
@@ -719,20 +730,23 @@ public class BillingService {
         }
     }
 
-    /** Webhook 自愈：月订/加购包发放积分（不调 PayPal，资金已由 webhook 确认）。 */
+    /** Webhook 自愈：月订/加购包发放积分（不调 PayPal，资金已由 webhook 确认）。G1 同事务。 */
     private WebhookHandleResult healCreditCapture(PaymentOrder order, String captureId, boolean isSubscription) {
         String code = order.getRefId();
         Long userId = order.getUserId();
-        // grant 已做幂等性（同 plan/package 可重复捕获但积分只按一次 plan 发；避免重复发放用捕获标记）
-        BillingDtos.GrantCreditsResult grant = isSubscription
-                ? creditService.grantSubscriptionCredits(userId, code, order.getId())
-                : creditService.grantPackCredits(userId, code, order.getId());
-        int marked = paymentOrderRepository.markCaptured(order.getPaypalOrderId(), captureId, null);
-        if (marked == 0) {
-            throw new IllegalStateException("markCaptured affected 0 rows for " + order.getPaypalOrderId());
-        }
+        BillingDtos.GrantCreditsResult[] grantHolder = new BillingDtos.GrantCreditsResult[1];
+        transactionTemplate.executeWithoutResult(status -> {
+            grantHolder[0] = isSubscription
+                    ? creditService.grantSubscriptionCredits(userId, code, order.getId())
+                    : creditService.grantPackCredits(userId, code, order.getId());
+            int marked = paymentOrderRepository.markCaptured(order.getPaypalOrderId(), captureId, null);
+            if (marked == 0) {
+                throw new IllegalStateException(
+                        "markCaptured affected 0 rows for " + order.getPaypalOrderId());
+            }
+        });
         log.info("Webhook self-healed credit grant: userId={} purpose={} code={} granted={}",
-                userId, order.getPurpose(), code, grant.grantedCredits());
+                userId, order.getPurpose(), code, grantHolder[0].grantedCredits());
         return new WebhookHandleResult(true, "HEALED_CREDIT", order.getPaypalOrderId());
     }
 

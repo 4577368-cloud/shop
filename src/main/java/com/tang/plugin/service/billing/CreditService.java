@@ -509,6 +509,11 @@ public class CreditService {
         return new WelcomeClaimResponse(true, false, WELCOME_CREDITS, balanceHolder[0]);
     }
 
+    /** 是否已领取欢迎分（供顶栏水合，不触发发放）。 */
+    public boolean hasClaimedWelcome(Long userId) {
+        return welcomeClaimRepository.exists(userId);
+    }
+
     /**
      * 月订捕获后发放积分（§5 / D5）。
      * B5 修复：同一 paymentOrderId 幂等，webhook 自愈 / 前端重试不会重复发整包。

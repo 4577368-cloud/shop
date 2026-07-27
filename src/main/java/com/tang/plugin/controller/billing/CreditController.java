@@ -4,6 +4,7 @@ import com.tang.plugin.dto.billing.BillingDtos.CreditLotListResponse;
 import com.tang.plugin.dto.billing.BillingDtos.CreditBucketBreakdown;
 import com.tang.plugin.dto.billing.BillingDtos.CreditOverview;
 import com.tang.plugin.dto.billing.BillingDtos.WelcomeClaimResponse;
+import com.tang.plugin.dto.billing.BillingDtos.WelcomeStatusResponse;
 import com.tang.plugin.dto.billing.BillingDtos.CreditTransactionListResponse;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeCreditsRequest;
 import com.tang.plugin.dto.billing.BillingDtos.ConsumeCreditsResult;
@@ -106,6 +107,13 @@ public class CreditController {
     public ResponseEntity<WelcomeClaimResponse> claimWelcome(HttpServletRequest httpRequest) {
         Long userId = currentUserId(httpRequest);
         return ResponseEntity.ok(creditService.claimWelcome(userId));
+    }
+
+    /** 欢迎分领取状态（G5e 顶栏水合；不触发发放）。 */
+    @GetMapping("/credits/welcome/status")
+    public ResponseEntity<WelcomeStatusResponse> welcomeStatus(HttpServletRequest httpRequest) {
+        Long userId = currentUserId(httpRequest);
+        return ResponseEntity.ok(new WelcomeStatusResponse(creditService.hasClaimedWelcome(userId)));
     }
 
     /**

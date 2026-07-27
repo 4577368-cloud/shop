@@ -9,7 +9,9 @@ import com.tang.plugin.dto.marketing.MarketingDtos.DossierResponse;
 import com.tang.plugin.dto.marketing.MarketingDtos.MarketingDataResponse;
 import com.tang.plugin.service.marketing.CompetitorStoreService;
 import com.tang.plugin.service.marketing.PipispyClient;
+import com.tang.plugin.service.marketing.UpstreamPoolGuard;
 import com.tang.plugin.service.billing.CreditService;
+import com.tang.plugin.service.user.AdminGuard;
 import com.tang.plugin.repository.CreditTransactionRepository;
 import com.tang.plugin.repository.UserDailyUsageRepository;
 import com.tang.plugin.repository.UserSubscriptionRepository;
@@ -78,6 +80,8 @@ public class MarketingController {
     private final CreditTransactionRepository txnRepository;
     private final UserDailyUsageRepository dailyUsageRepository;
     private final UserSubscriptionRepository subscriptionRepository;
+    private final UpstreamPoolGuard upstreamPoolGuard;
+    private final AdminGuard adminGuard;
 
   @PostMapping("/data")
   public ResponseEntity<MarketingDataResponse> postData(
@@ -103,8 +107,11 @@ public class MarketingController {
     return toHttp(handleMarketing(userId, uri, map, expectedCredits));
   }
 
+  /** L0 pipispy 余额：仅管理员可读；终端用户顶栏不得展示此数字。 */
   @GetMapping("/credits-balance")
-  public ResponseEntity<MarketingDataResponse> creditsBalance() {
+  public ResponseEntity<MarketingDataResponse> creditsBalance(HttpServletRequest httpRequest) {
+    Long userId = currentUserId(httpRequest);
+    adminGuard.assertAdmin(userId);
     return toHttp(pipispyClient.fetchCreditsBalance());
   }
 
@@ -135,10 +142,14 @@ public class MarketingController {
     // 2.5) 日调用上限检查（§2.1）
     assertDailyLimit(userId);
 
+    // 2.6) L0 储备金熔断（G6d）：用户有分也不放行空烧
+    upstreamPoolGuard.assertAvailableForPaidCall();
+
     // 3) 预估 assert（防浪费上游额度）
     // B4 修复：预估不可信任客户端被压低的 expectedCredits —— 否则可绕过 402 门禁、
     // 先调上游烧掉 L0 额度再在实扣时 402。服务端 defaultEstimate 作为下界，客户端值只能抬高。
-    int serverEstimate = defaultEstimate(uri, params, 12);
+    Map<String, Object> effectiveParams = withDefaultPageSize(params, 12);
+    int serverEstimate = defaultEstimate(uri, effectiveParams, 12);
     int estimate = expectedCredits != null ? Math.max(expectedCredits, serverEstimate) : serverEstimate;
     Integer balance = creditService.getBalance(userId);
     if (balance == null || balance < estimate) {
@@ -147,7 +158,7 @@ public class MarketingController {
     }
 
     // 4) 调上游
-    MarketingDataResponse res = pipispyClient.postData(uri, params);
+    MarketingDataResponse res = pipispyClient.postData(uri, effectiveParams);
     if (!res.ok()) return res;
 
     // 5) 实扣 = 上游 U × 2
@@ -262,14 +273,28 @@ public class MarketingController {
     // 日调用上限检查（§2.1）—— dossier 算 1 次
     assertDailyLimit(userId);
 
+    // L0 熔断（G6d）：档案扇出至少有一项付费时才检查
+    boolean anyPaid = false;
+    for (DossierRequestItem item : items) {
+        if (!isFreeUri(item.uri())
+            && !(isWindowedUri(item.uri()) && entityIdOf(item.params()) != null
+                && recentConsumeExists(userId, endpointOf(item.uri()), entityIdOf(item.params())))) {
+            anyPaid = true;
+            break;
+        }
+    }
+    if (anyPaid) {
+        upstreamPoolGuard.assertAvailableForPaidCall();
+    }
+
     // 总预估（免费/窗口 item 不计入）
     int totalEstimate = 0;
     for (DossierRequestItem item : items) {
         if (!isFreeUri(item.uri())
             && !(isWindowedUri(item.uri()) && entityIdOf(item.params()) != null
                 && recentConsumeExists(userId, endpointOf(item.uri()), entityIdOf(item.params())))) {
-            // B4 修复：同单条路径，客户端 expectedCredits 只能抬高服务端下界，不能压低
-            int itemServerEst = defaultEstimate(item.uri(), item.params(), 7);
+            Map<String, Object> itemParams = withDefaultPageSize(item.params(), 7);
+            int itemServerEst = defaultEstimate(item.uri(), itemParams, 7);
             int itemEst = item.expectedCredits() != null
                 ? Math.max(item.expectedCredits(), itemServerEst) : itemServerEst;
             totalEstimate += itemEst;
@@ -286,20 +311,21 @@ public class MarketingController {
     for (DossierRequestItem item : items) {
         String endpoint = endpointOf(item.uri());
         String entityId = entityIdOf(item.params());
+        Map<String, Object> itemParams = withDefaultPageSize(item.params(), 7);
         MarketingDataResponse r;
         if (isFreeUri(item.uri())) {
-            r = pipispyClient.postData(item.uri(), item.params());
+            r = pipispyClient.postData(item.uri(), itemParams);
             if (r.ok()) r = withBilling(r, 0, creditService.getBalance(userId), true);
         } else if (isWindowedUri(item.uri()) && entityId != null
             && recentConsumeExists(userId, endpoint, entityId)) {
-            r = pipispyClient.postData(item.uri(), item.params());
+            r = pipispyClient.postData(item.uri(), itemParams);
             if (r.ok()) r = withBilling(r, 0, creditService.getBalance(userId), true);
         } else {
-            r = pipispyClient.postData(item.uri(), item.params());
+            r = pipispyClient.postData(item.uri(), itemParams);
             if (r.ok()) {
                 int upstreamU = r.consumedCredits() != null ? r.consumedCredits() : 0;
                 if (upstreamU > 0) {
-                    String effectiveCacheKey = entityId != null ? entityId : defaultCacheKey(item.uri(), item.params());
+                    String effectiveCacheKey = entityId != null ? entityId : defaultCacheKey(item.uri(), itemParams);
                     com.tang.plugin.dto.billing.BillingDtos.MarketingChargeResult ch =
                         creditService.chargeMarketingCall(userId, upstreamU, item.uri(), effectiveCacheKey, endpoint, entityId);
                     r = withBilling(r, ch.chargedCredits(), ch.balanceAfter(), false);
@@ -397,12 +423,25 @@ public class MarketingController {
     int pageSize = defaultPageSize;
     if (params != null) {
       Object ps = params.get("pageSize");
+      if (ps == null) ps = params.get("page_size");
       if (ps instanceof Number n) pageSize = n.intValue();
       else if (ps instanceof String s) {
         try { pageSize = Integer.parseInt(s); } catch (NumberFormatException ignored) {}
       }
     }
     return Math.max(1, pageSize) * 2;
+  }
+
+  /**
+   * G4：向上游注入默认 pageSize（缺省时），避免列表按行超预期烧 L0。
+   * 不覆盖调用方已显式传入的 pageSize / page_size。
+   */
+  private static Map<String, Object> withDefaultPageSize(Map<String, Object> params, int defaultPageSize) {
+    Map<String, Object> out = params == null ? new LinkedHashMap<>() : new LinkedHashMap<>(params);
+    if (!out.containsKey("pageSize") && !out.containsKey("page_size")) {
+      out.put("pageSize", defaultPageSize);
+    }
+    return out;
   }
 
   /** 稳定请求签名（用于幂等键；不同页/筛选 → 不同键）。 */
