@@ -206,8 +206,9 @@ public class RankRepository {
     /**
      * List active products for a snapshot, optionally filtered by L1 category.
      * Ordered by GMV desc (the board ranking), then sales volume desc.
+     * Hard-capped by {@code limit} to avoid loading oversized boards into memory.
      */
-    public List<RankProduct> listProducts(String shopName, Long snapshotId, String categoryL1) {
+    public List<RankProduct> listProducts(String shopName, Long snapshotId, String categoryL1, int limit) {
         if (shopName == null || snapshotId == null) {
             return List.of();
         }
@@ -228,7 +229,71 @@ public class RankRepository {
             params.add(categoryL1);
         }
         sql.append(" ORDER BY gmv_usd DESC NULLS LAST, sales_volume DESC NULLS LAST, id ASC");
+        sql.append(" LIMIT ?");
+        params.add(Math.max(1, limit));
         return jdbcTemplate.query(sql.toString(), PRODUCT_ROW_MAPPER, params.toArray());
+    }
+
+    /** Total active product rows across all snapshots (for startup memory guard). */
+    public long countAllProducts() {
+        Long n = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM rank_product WHERE del_flag = 0", Long.class);
+        return n == null ? 0L : n;
+    }
+
+    /**
+     * Wipe all ranking data. Used when the board is oversized and pressures free-tier memory.
+     * @return deleted product row count (best-effort)
+     */
+    public int clearAll() {
+        Integer productCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM rank_product", Integer.class);
+        jdbcTemplate.update("DELETE FROM rank_product");
+        jdbcTemplate.update("DELETE FROM rank_snapshot");
+        int deleted = productCount == null ? 0 : productCount;
+        log.warn("Cleared all ranking data: deletedProducts={}", deleted);
+        return deleted;
+    }
+
+    /**
+     * Keep at most {@code limit} products globally (highest GMV), delete the rest.
+     * Snapshots with zero remaining products are removed.
+     */
+    public int pruneToGlobalLimit(int limit) {
+        int keep = Math.max(1, limit);
+        int deleted = jdbcTemplate.update(
+                """
+                DELETE FROM rank_product
+                WHERE id NOT IN (
+                  SELECT id FROM (
+                    SELECT id
+                    FROM rank_product
+                    WHERE del_flag = 0
+                    ORDER BY gmv_usd DESC NULLS LAST, sales_volume DESC NULLS LAST, id ASC
+                    LIMIT ?
+                  ) keepers
+                )
+                """,
+                keep);
+        jdbcTemplate.update(
+                """
+                DELETE FROM rank_snapshot s
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM rank_product p
+                  WHERE p.snapshot_id = s.id AND p.del_flag = 0
+                )
+                """);
+        jdbcTemplate.update(
+                """
+                UPDATE rank_snapshot s
+                SET product_count = (
+                  SELECT COUNT(*) FROM rank_product p
+                  WHERE p.snapshot_id = s.id AND p.del_flag = 0
+                ),
+                updated_at = NOW()
+                """);
+        log.warn("Pruned ranking products to global limit {}: deleted={}", keep, deleted);
+        return deleted;
     }
 
     private static Instant toInstant(Timestamp ts) {
