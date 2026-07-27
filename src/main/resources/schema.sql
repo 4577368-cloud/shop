@@ -771,13 +771,18 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
     ref_id              VARCHAR(64),
     endpoint            VARCHAR(128),                  -- marketing_api 时的具体接口
     remark              VARCHAR(255),
-    idempotency_key     VARCHAR(64),                   -- 幂等键（如 marketing_api 的 cacheKey）
+    idempotency_key     VARCHAR(255),                  -- 幂等键（如 marketing_api 的 cacheKey）
     created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Migration: add idempotency_key for existing deployments (CREATE TABLE IF NOT EXISTS
 -- does not alter columns; index below requires the column to exist first).
-ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
+ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255);
+
+-- B1 修复：已部署环境从 VARCHAR(64) 扩容到 VARCHAR(255)。
+-- H2 兼容语法：H2 支持 ALTER TABLE … ALTER COLUMN … VARCHAR(255)
+-- PostgreSQL 兼容语法同上。
+ALTER TABLE credit_transactions ALTER COLUMN idempotency_key VARCHAR(255);
 
 CREATE INDEX IF NOT EXISTS idx_credit_txn_user_created ON credit_transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_credit_txn_ref ON credit_transactions (ref_type, ref_id);
