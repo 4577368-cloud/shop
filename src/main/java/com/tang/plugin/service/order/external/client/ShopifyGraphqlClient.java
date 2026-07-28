@@ -69,12 +69,18 @@ public class ShopifyGraphqlClient {
 
     private static String buildHttpErrorMessage(HttpStatusCode status, String shopName, String body) {
         int code = status.value();
-        String hint = switch (code) {
-            case 401 -> "re-authorize the store (access token invalid or revoked)";
-            case 403 -> "app may lack required Shopify scopes (e.g. write_products); re-install with updated permissions";
-            case 404 -> "check shop domain matches the authorized myshopify.com store";
-            default -> "check plugin logs for Shopify response body";
-        };
+        String lower = StringUtils.defaultString(body).toLowerCase();
+        String hint;
+        if (code == 403 && lower.contains("non-expiring access tokens")) {
+            hint = "Shopify rejected a non-expiring offline token; migrate/re-authorize so the app stores an expiring offline token + refresh_token";
+        } else {
+            hint = switch (code) {
+                case 401 -> "re-authorize the store (access token invalid or revoked)";
+                case 403 -> "app may lack required Shopify scopes (e.g. write_products); re-install with updated permissions";
+                case 404 -> "check shop domain matches the authorized myshopify.com store";
+                default -> "check plugin logs for Shopify response body";
+            };
+        }
         String snippet = truncate(StringUtils.trimToEmpty(body), 300);
         if (StringUtils.isBlank(snippet)) {
             return "Shopify GraphQL HTTP " + code + ", shopName=" + shopName + "; " + hint;

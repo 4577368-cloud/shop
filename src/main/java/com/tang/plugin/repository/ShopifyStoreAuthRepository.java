@@ -22,6 +22,12 @@ import java.util.Optional;
 @Repository
 public class ShopifyStoreAuthRepository {
 
+    private static final String SELECT_COLS = """
+            id, shop_name, shop_domain, access_token, scope, status,
+            authorized_at, updated_at, del_flag,
+            refresh_token, access_token_expires_at, refresh_token_expires_at
+            """;
+
     private static final RowMapper<ShopifyStoreAuth> ROW_MAPPER = (rs, rowNum) -> new ShopifyStoreAuth()
             .setId(rs.getLong("id"))
             .setShopName(rs.getString("shop_name"))
@@ -31,7 +37,10 @@ public class ShopifyStoreAuthRepository {
             .setStatus(ShopifyAuthStatus.valueOf(rs.getString("status")))
             .setAuthorizedAt(toInstant(rs.getTimestamp("authorized_at")))
             .setUpdatedAt(toInstant(rs.getTimestamp("updated_at")))
-            .setDelFlag(rs.getInt("del_flag"));
+            .setDelFlag(rs.getInt("del_flag"))
+            .setRefreshToken(rs.getString("refresh_token"))
+            .setAccessTokenExpiresAt(toInstant(rs.getTimestamp("access_token_expires_at")))
+            .setRefreshTokenExpiresAt(toInstant(rs.getTimestamp("refresh_token_expires_at")));
 
     @Resource
     private JdbcTemplate jdbcTemplate;
@@ -42,12 +51,7 @@ public class ShopifyStoreAuthRepository {
         }
         try {
             ShopifyStoreAuth auth = jdbcTemplate.queryForObject(
-                    """
-                    SELECT id, shop_name, shop_domain, access_token, scope, status,
-                           authorized_at, updated_at, del_flag
-                    FROM shopify_store_auth
-                    WHERE shop_domain = ?
-                    """,
+                    "SELECT " + SELECT_COLS + " FROM shopify_store_auth WHERE shop_domain = ?",
                     ROW_MAPPER,
                     shopDomain.trim().toLowerCase());
             return Optional.ofNullable(auth);
@@ -68,12 +72,8 @@ public class ShopifyStoreAuthRepository {
         }
         try {
             ShopifyStoreAuth auth = jdbcTemplate.queryForObject(
-                    """
-                    SELECT id, shop_name, shop_domain, access_token, scope, status,
-                           authorized_at, updated_at, del_flag
-                    FROM shopify_store_auth
-                    WHERE shop_name = ? AND status = ? AND del_flag = 0
-                    """,
+                    "SELECT " + SELECT_COLS
+                            + " FROM shopify_store_auth WHERE shop_name = ? AND status = ? AND del_flag = 0",
                     ROW_MAPPER,
                     shopName.trim(),
                     ShopifyAuthStatus.ACTIVE.name());
@@ -85,13 +85,9 @@ public class ShopifyStoreAuthRepository {
 
     public List<ShopifyStoreAuth> listActive() {
         return jdbcTemplate.query(
-                """
-                SELECT id, shop_name, shop_domain, access_token, scope, status,
-                       authorized_at, updated_at, del_flag
-                FROM shopify_store_auth
-                WHERE status = ? AND del_flag = 0
-                ORDER BY authorized_at DESC, id DESC
-                """,
+                "SELECT " + SELECT_COLS
+                        + " FROM shopify_store_auth WHERE status = ? AND del_flag = 0"
+                        + " ORDER BY authorized_at DESC, id DESC",
                 ROW_MAPPER,
                 ShopifyAuthStatus.ACTIVE.name());
     }
@@ -105,7 +101,8 @@ public class ShopifyStoreAuthRepository {
                     """
                     UPDATE shopify_store_auth
                     SET shop_name = ?, access_token = ?, scope = ?, status = ?,
-                        authorized_at = ?, updated_at = ?, del_flag = 0
+                        authorized_at = ?, updated_at = ?, del_flag = 0,
+                        refresh_token = ?, access_token_expires_at = ?, refresh_token_expires_at = ?
                     WHERE id = ?
                     """,
                     auth.getShopName(),
@@ -114,9 +111,13 @@ public class ShopifyStoreAuthRepository {
                     ShopifyAuthStatus.ACTIVE.name(),
                     Timestamp.from(auth.getAuthorizedAt() != null ? auth.getAuthorizedAt() : now),
                     Timestamp.from(now),
+                    auth.getRefreshToken(),
+                    toTimestamp(auth.getAccessTokenExpiresAt()),
+                    toTimestamp(auth.getRefreshTokenExpiresAt()),
                     id);
-            log.info("Updated ShopifyStoreAuth shopDomain={} shopName={} id={}",
-                    auth.getShopDomain(), auth.getShopName(), id);
+            log.info("Updated ShopifyStoreAuth shopDomain={} shopName={} id={} expiring={}",
+                    auth.getShopDomain(), auth.getShopName(), id,
+                    StringUtils.isNotBlank(auth.getRefreshToken()));
             return id;
         }
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -124,8 +125,9 @@ public class ShopifyStoreAuthRepository {
             PreparedStatement ps = connection.prepareStatement(
                     """
                     INSERT INTO shopify_store_auth
-                    (shop_name, shop_domain, access_token, scope, status, authorized_at, updated_at, del_flag)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                    (shop_name, shop_domain, access_token, scope, status, authorized_at, updated_at, del_flag,
+                     refresh_token, access_token_expires_at, refresh_token_expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     new String[]{"id"});
             ps.setString(1, auth.getShopName());
@@ -136,12 +138,16 @@ public class ShopifyStoreAuthRepository {
             Instant authorizedAt = auth.getAuthorizedAt() != null ? auth.getAuthorizedAt() : now;
             ps.setTimestamp(6, Timestamp.from(authorizedAt));
             ps.setTimestamp(7, Timestamp.from(now));
+            ps.setString(8, auth.getRefreshToken());
+            ps.setTimestamp(9, toTimestamp(auth.getAccessTokenExpiresAt()));
+            ps.setTimestamp(10, toTimestamp(auth.getRefreshTokenExpiresAt()));
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
         Long id = key == null ? null : key.longValue();
-        log.info("Inserted ShopifyStoreAuth shopDomain={} shopName={} id={}",
-                auth.getShopDomain(), auth.getShopName(), id);
+        log.info("Inserted ShopifyStoreAuth shopDomain={} shopName={} id={} expiring={}",
+                auth.getShopDomain(), auth.getShopName(), id,
+                StringUtils.isNotBlank(auth.getRefreshToken()));
         return id;
     }
 
@@ -150,7 +156,9 @@ public class ShopifyStoreAuthRepository {
         int updated = jdbcTemplate.update(
                 """
                 UPDATE shopify_store_auth
-                SET status = ?, access_token = '', updated_at = ?, del_flag = 1
+                SET status = ?, access_token = '', refresh_token = NULL,
+                    access_token_expires_at = NULL, refresh_token_expires_at = NULL,
+                    updated_at = ?, del_flag = 1
                 WHERE shop_domain = ?
                 """,
                 ShopifyAuthStatus.UNINSTALLED.name(),
@@ -161,5 +169,9 @@ public class ShopifyStoreAuthRepository {
 
     private static Instant toInstant(Timestamp ts) {
         return ts == null ? null : ts.toInstant();
+    }
+
+    private static Timestamp toTimestamp(Instant instant) {
+        return instant == null ? null : Timestamp.from(instant);
     }
 }

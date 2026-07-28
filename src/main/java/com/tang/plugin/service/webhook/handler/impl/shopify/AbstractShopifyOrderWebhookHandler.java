@@ -33,7 +33,7 @@ abstract class AbstractShopifyOrderWebhookHandler implements ShopifyWebhookEvent
     private ShopifyOrderStrategyImpl shopifyOrderStrategyImpl;
 
     protected void ingestOrderWebhook(String shopDomain, String webhookId, String rawPayload, String eventLabel) {
-        ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain)
+        ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveFreshByShopDomain(shopDomain)
                 .orElseThrow(() -> new CustomException(
                         "Shopify order webhook rejected, auth not ACTIVE, shopDomain=" + shopDomain));
 

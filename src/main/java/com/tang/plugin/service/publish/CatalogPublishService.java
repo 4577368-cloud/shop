@@ -11,8 +11,8 @@ import com.tang.plugin.domain.entity.pricing.PricingTemplate;
 import com.tang.plugin.domain.entity.publish.ProductPublishRecord;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.enums.publish.ProductPublishStatus;
-import com.tang.plugin.repository.ShopifyStoreAuthRepository;
 import com.tang.plugin.service.catalog.TangbuyCatalogService;
+import com.tang.plugin.service.user.ShopifyStoreAuthService;
 import com.tang.plugin.service.pricing.PriceCalculator;
 import com.tang.plugin.service.pricing.PricingTemplateService;
 import com.tang.plugin.service.publish.component.shopify.ShopifyProductPublishComponent;
@@ -50,7 +50,7 @@ public class CatalogPublishService {
     @Resource
     private ProductPublishRecordService productPublishRecordService;
     @Resource
-    private ShopifyStoreAuthRepository shopifyStoreAuthRepository;
+    private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ShopifyProductPublishComponent shopifyProductPublishComponent;
     @Resource
@@ -86,7 +86,7 @@ public class CatalogPublishService {
         }
 
         // write_products precheck BEFORE moving state (keeps attempts/state clean when unauthorized).
-        ShopifyStoreAuth auth = shopifyStoreAuthRepository.findActiveByShopName(shopName)
+        ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveFreshByShopName(shopName)
                 .orElseThrow(() -> new CustomException("shop not authorized (no ACTIVE auth), shopName=" + shopName));
         if (!scopeContains(auth.getScope(), REQUIRED_SCOPE)) {
             throw new CustomException("shop missing " + REQUIRED_SCOPE

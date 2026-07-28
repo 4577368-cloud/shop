@@ -14,10 +14,19 @@ import org.springframework.web.client.RestClientException;
 
 /**
  * Shopify OAuth / token network calls only.
+ *
+ * <p>Public apps must request <em>expiring</em> offline tokens ({@code expiring=1}). Legacy
+ * non-expiring tokens are migrated once via token exchange, then refreshed with
+ * {@code grant_type=refresh_token}.
  */
 @Slf4j
 @Component
 public class ShopifyAuthComponent {
+
+    private static final String GRANT_TOKEN_EXCHANGE =
+            "urn:ietf:params:oauth:grant-type:token-exchange";
+    private static final String TOKEN_TYPE_OFFLINE =
+            "urn:shopify:params:oauth:token-type:offline-access-token";
 
     @Resource
     private ShopifyProperties shopifyProperties;
@@ -33,13 +42,51 @@ public class ShopifyAuthComponent {
                 + "&state=" + urlEncode(state);
     }
 
+    /** Authorization-code → expiring offline access token. */
     public JSONObject exchangeAccessToken(String shopDomain, String code) {
-        String domain = ShopifyGraphqlClient.normalizeDomain(shopDomain);
-        String url = "https://" + domain + "/admin/oauth/access_token";
         JSONObject body = new JSONObject();
         body.put("client_id", StringUtils.trim(shopifyProperties.getApiKey()));
         body.put("client_secret", StringUtils.trim(shopifyProperties.getApiSecret()));
         body.put("code", code);
+        body.put("expiring", "1");
+        return postToken(shopDomain, body, "authorization-code");
+    }
+
+    /** Rotate an expiring offline access token using its refresh token. */
+    public JSONObject refreshAccessToken(String shopDomain, String refreshToken) {
+        if (StringUtils.isBlank(refreshToken)) {
+            throw new CustomException("Shopify refresh_token blank, shopDomain=" + shopDomain);
+        }
+        JSONObject body = new JSONObject();
+        body.put("client_id", StringUtils.trim(shopifyProperties.getApiKey()));
+        body.put("client_secret", StringUtils.trim(shopifyProperties.getApiSecret()));
+        body.put("grant_type", "refresh_token");
+        body.put("refresh_token", refreshToken);
+        return postToken(shopDomain, body, "refresh");
+    }
+
+    /**
+     * One-time migration: exchange a legacy non-expiring offline token for an expiring pair.
+     * Irreversible — the old token is revoked on success.
+     */
+    public JSONObject migrateToExpiringOfflineToken(String shopDomain, String nonExpiringAccessToken) {
+        if (StringUtils.isBlank(nonExpiringAccessToken)) {
+            throw new CustomException("Shopify migrate subject_token blank, shopDomain=" + shopDomain);
+        }
+        JSONObject body = new JSONObject();
+        body.put("client_id", StringUtils.trim(shopifyProperties.getApiKey()));
+        body.put("client_secret", StringUtils.trim(shopifyProperties.getApiSecret()));
+        body.put("grant_type", GRANT_TOKEN_EXCHANGE);
+        body.put("subject_token", nonExpiringAccessToken);
+        body.put("subject_token_type", TOKEN_TYPE_OFFLINE);
+        body.put("requested_token_type", TOKEN_TYPE_OFFLINE);
+        body.put("expiring", "1");
+        return postToken(shopDomain, body, "migrate-expiring");
+    }
+
+    private JSONObject postToken(String shopDomain, JSONObject body, String kind) {
+        String domain = ShopifyGraphqlClient.normalizeDomain(shopDomain);
+        String url = "https://" + domain + "/admin/oauth/access_token";
         try {
             String raw = restClient.post()
                     .uri(url)
@@ -50,25 +97,32 @@ public class ShopifyAuthComponent {
                             (request, response) -> {
                                 String errBody = new String(response.getBody().readAllBytes(),
                                         java.nio.charset.StandardCharsets.UTF_8);
-                                log.error("Shopify token exchange HTTP {} shopDomain={} body={}",
-                                        response.getStatusCode(), domain, errBody);
-                                throw new CustomException("Shopify token exchange HTTP "
+                                log.error("Shopify token {} HTTP {} shopDomain={} body={}",
+                                        kind, response.getStatusCode(), domain, errBody);
+                                throw new CustomException("Shopify token " + kind + " HTTP "
                                         + response.getStatusCode() + ", shopDomain=" + domain
                                         + ", body=" + errBody);
                             })
                     .body(String.class);
             JSONObject json = JSONObject.parseObject(raw);
             if (json == null || StringUtils.isBlank(json.getString("access_token"))) {
-                log.error("Shopify token exchange empty shopDomain={} raw={}", domain, raw);
-                throw new CustomException("Shopify token exchange failed, shopDomain=" + domain);
+                log.error("Shopify token {} empty shopDomain={} raw={}", kind, domain, raw);
+                throw new CustomException("Shopify token " + kind + " failed, shopDomain=" + domain);
             }
-            log.info("Shopify token exchange ok shopDomain={}", domain);
+            boolean expiring = StringUtils.isNotBlank(json.getString("refresh_token"));
+            log.info("Shopify token {} ok shopDomain={} expiring={} expiresIn={}",
+                    kind, domain, expiring, json.get("expires_in"));
+            if (!expiring) {
+                log.warn("Shopify token {} returned non-expiring token for shopDomain={}. "
+                        + "Admin API may reject it; ensure expiring=1 is accepted by this app.",
+                        kind, domain);
+            }
             return json;
         } catch (CustomException e) {
             throw e;
         } catch (RestClientException e) {
-            log.error("Shopify token exchange HTTP failed shopDomain={}", domain, e);
-            throw new CustomException("Shopify token exchange HTTP failed, shopDomain=" + domain
+            log.error("Shopify token {} HTTP failed shopDomain={}", kind, domain, e);
+            throw new CustomException("Shopify token " + kind + " HTTP failed, shopDomain=" + domain
                     + ", cause=" + e.getMessage(), e);
         }
     }

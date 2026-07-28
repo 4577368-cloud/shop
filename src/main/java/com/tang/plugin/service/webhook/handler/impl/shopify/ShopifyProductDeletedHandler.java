@@ -31,7 +31,7 @@ public class ShopifyProductDeletedHandler implements ShopifyWebhookEventHandler 
 
     @Override
     public void handle(String shopDomain, String webhookId, String rawPayload) {
-        ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain)
+        ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveFreshByShopDomain(shopDomain)
                 .orElseThrow(() -> new CustomException(
                         "Shopify products/delete rejected, auth not ACTIVE, shopDomain=" + shopDomain));
 

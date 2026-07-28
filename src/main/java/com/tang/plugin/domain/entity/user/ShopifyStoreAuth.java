@@ -8,6 +8,9 @@ import java.time.Instant;
 
 /**
  * Shopify store OAuth token — maps to shopify_store_auth.
+ *
+ * <p>Shopify public apps must use <em>expiring</em> offline tokens. Persist
+ * {@code refreshToken} / expiry timestamps so Admin API calls can rotate before use.
  */
 @Data
 @Accessors(chain = true)
@@ -21,4 +24,8 @@ public class ShopifyStoreAuth {
     private Instant authorizedAt;
     private Instant updatedAt;
     private Integer delFlag;
+    /** Refresh token for expiring offline access (null for legacy non-expiring rows). */
+    private String refreshToken;
+    private Instant accessTokenExpiresAt;
+    private Instant refreshTokenExpiresAt;
 }

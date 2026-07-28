@@ -231,17 +231,21 @@ public class ShopifyAuthService {
                     + ", cause=" + e.getMessage(), e);
         }
         String accessToken = tokenJson.getString("access_token");
-        String scope = tokenJson.getString("scope");
+        if (StringUtils.isBlank(tokenJson.getString("refresh_token"))) {
+            log.warn("Shopify callback returned non-expiring token for shopDomain={}; Admin API may reject it",
+                    shopDomain);
+        }
 
         Long authId;
         try {
-            authId = shopifyStoreAuthService.saveActiveAuth(shopName, shopDomain, accessToken, scope);
+            authId = shopifyStoreAuthService.saveActiveAuth(shopName, shopDomain, tokenJson);
         } catch (Exception e) {
             log.error("Shopify auth persist failed shopDomain={}", shopDomain, e);
             throw new CustomException("Shopify auth save failed, shopDomain=" + shopDomain
                     + ", cause=" + e.getMessage(), e);
         }
-        log.info("Shopify auth saved shopDomain={} shopName={} authId={}", shopDomain, shopName, authId);
+        log.info("Shopify auth saved shopDomain={} shopName={} authId={} expiring={}",
+                shopDomain, shopName, authId, StringUtils.isNotBlank(tokenJson.getString("refresh_token")));
 
         UserShop binding = userShopRepository.upsertBinding(oauthState.getUserId(), shopName, shopDomain);
         log.info("Shop bound userId={} shopName={} bindingId={}",

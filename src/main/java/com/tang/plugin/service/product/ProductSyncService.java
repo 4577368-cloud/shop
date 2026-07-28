@@ -193,7 +193,7 @@ public class ProductSyncService {
     /** Idempotent: registers any missing topics (e.g. products/delete) for already-authorized shops. */
     private void ensureWebhooksRegistered(String shopName) {
         try {
-            ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveByShopName(shopName).orElse(null);
+            ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveFreshByShopName(shopName).orElse(null);
             if (auth == null || StringUtils.isAnyBlank(auth.getShopDomain(), auth.getAccessToken())) {
                 return;
             }

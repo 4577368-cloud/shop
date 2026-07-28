@@ -70,14 +70,19 @@ class CatalogPublishServiceTest {
     }
 
     private void seedAuth(String scope) {
+        Instant now = Instant.now();
         jdbcTemplate.update(
                 """
                 INSERT INTO shopify_store_auth
-                (shop_name, shop_domain, access_token, scope, status, authorized_at, updated_at, del_flag)
-                VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, 0)
+                (shop_name, shop_domain, access_token, scope, status, authorized_at, updated_at, del_flag,
+                 refresh_token, access_token_expires_at, refresh_token_expires_at)
+                VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, 0, ?, ?, ?)
                 """,
                 SHOP, DOMAIN, "token-xyz", scope,
-                java.sql.Timestamp.from(Instant.now()), java.sql.Timestamp.from(Instant.now()));
+                java.sql.Timestamp.from(now), java.sql.Timestamp.from(now),
+                "refresh-xyz",
+                java.sql.Timestamp.from(now.plusSeconds(3600)),
+                java.sql.Timestamp.from(now.plusSeconds(7_776_000)));
     }
 
     private ShopifyCreateProductResult ok() {

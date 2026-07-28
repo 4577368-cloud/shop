@@ -17,6 +17,8 @@ import java.util.Optional;
 
 /**
  * Enabled Shopify shops: JDBC ACTIVE auth first; yml test-shops as local-dev fallback only.
+ *
+ * <p>DB-backed shops always resolve a fresh (expiring) offline access token before use.
  */
 @Slf4j
 @Component
@@ -30,7 +32,12 @@ public class ShopifyEnabledShopProvider {
     public List<ShopifyEnabledShop> listEnabled() {
         Map<String, ShopifyEnabledShop> byDomain = new LinkedHashMap<>();
         for (ShopifyStoreAuth auth : shopifyStoreAuthService.listActive()) {
-            byDomain.put(auth.getShopDomain().toLowerCase(), toEnabled(auth));
+            try {
+                byDomain.put(auth.getShopDomain().toLowerCase(), toEnabled(auth));
+            } catch (Exception e) {
+                log.error("Skip shopDomain={} — cannot refresh Shopify token: {}",
+                        auth.getShopDomain(), e.getMessage());
+            }
         }
         for (ShopifyEnabledShop fallback : listTestShopFallback()) {
             byDomain.putIfAbsent(fallback.getShopDomain().toLowerCase(), fallback);
@@ -86,9 +93,10 @@ public class ShopifyEnabledShopProvider {
     }
 
     private ShopifyEnabledShop toEnabled(ShopifyStoreAuth auth) {
+        ShopifyStoreAuth fresh = shopifyStoreAuthService.ensureFreshAccessToken(auth);
         return new ShopifyEnabledShop()
-                .setShopName(auth.getShopName())
-                .setShopDomain(auth.getShopDomain())
-                .setAccessToken(auth.getAccessToken());
+                .setShopName(fresh.getShopName())
+                .setShopDomain(fresh.getShopDomain())
+                .setAccessToken(fresh.getAccessToken());
     }
 }
