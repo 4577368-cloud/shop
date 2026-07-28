@@ -63,7 +63,7 @@ public class LogisticsAcceptDecisionRepository {
                 ROW_MAPPER, shopName);
     }
 
-    /** 按 (shop, skuId) 查询单条，用于 UPSERT 前的存在性检查。 */
+    /** 按 (shop, skuId) 查询未删除的单条。 */
     public Optional<LogisticsAcceptDecision> findByShopAndSku(String shopName, String skuId) {
         if (StringUtils.isAnyBlank(shopName, skuId)) {
             return Optional.empty();
@@ -72,6 +72,31 @@ public class LogisticsAcceptDecisionRepository {
             LogisticsAcceptDecision row = jdbcTemplate.queryForObject(
                     "SELECT " + COLUMNS + " FROM logistics_accept_decision "
                             + "WHERE shop_name = ? AND third_platform_sku_id = ? AND del_flag = 0",
+                    ROW_MAPPER, shopName, skuId);
+            return Optional.ofNullable(row);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * UPSERT 前查找：优先活记录，否则取最近一条软删记录以便复活，
+     * 避免 uk_lad_shop_sku (shop, sku, del_flag) 在二次 soft-delete 时撞唯一键。
+     */
+    public Optional<LogisticsAcceptDecision> findByShopAndSkuIncludingDeleted(
+            String shopName, String skuId) {
+        if (StringUtils.isAnyBlank(shopName, skuId)) {
+            return Optional.empty();
+        }
+        Optional<LogisticsAcceptDecision> active = findByShopAndSku(shopName, skuId);
+        if (active.isPresent()) {
+            return active;
+        }
+        try {
+            LogisticsAcceptDecision row = jdbcTemplate.queryForObject(
+                    "SELECT " + COLUMNS + " FROM logistics_accept_decision "
+                            + "WHERE shop_name = ? AND third_platform_sku_id = ? "
+                            + "ORDER BY del_flag ASC, id DESC LIMIT 1",
                     ROW_MAPPER, shopName, skuId);
             return Optional.ofNullable(row);
         } catch (EmptyResultDataAccessException e) {
@@ -97,7 +122,8 @@ public class LogisticsAcceptDecisionRepository {
     public LogisticsAcceptDecision upsert(LogisticsAcceptDecision record) {
         Instant now = Instant.now();
         Optional<LogisticsAcceptDecision> existing =
-                findByShopAndSku(record.getShopName(), record.getThirdPlatformSkuId());
+                findByShopAndSkuIncludingDeleted(
+                        record.getShopName(), record.getThirdPlatformSkuId());
         if (existing.isPresent()) {
             Long id = existing.get().getId();
             jdbcTemplate.update(

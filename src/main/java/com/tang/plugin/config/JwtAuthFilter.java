@@ -18,8 +18,9 @@ import java.io.IOException;
 import java.util.Set;
 
 /**
- * JWT auth filter: validates the {@code tb_access} cookie on protected routes and injects
- * {@code userId} into the request attribute. Unprotected routes pass through untouched.
+ * JWT auth filter: validates {@code Authorization: Bearer} or {@code tb_access} cookie on
+ * protected routes and injects {@code userId} (+ optional {@code shopName}/{@code shopDomain})
+ * into request attributes.
  *
  * <p>Protected routes (require login):
  * <ul>
@@ -27,17 +28,12 @@ import java.util.Set;
  *   <li>{@code /api/plugin/auth/change-password}</li>
  *   <li>{@code /api/plugin/shopify/auth/install} — must know who is installing to bind the shop</li>
  *   <li>{@code /api/plugin/shopify/auth/shops} — scoped by user</li>
- *   <li>{@code /api/plugin/user/**} (future)</li>
- *   <li>{@code /api/plugin/billing/**} (future)</li>
+ *   <li>{@code /api/plugin/shopify/auth/status}</li>
+ *   <li>{@code /api/plugin/user/**}</li>
+ *   <li>Business APIs under match/order/pricing/…</li>
  * </ul>
  *
- * <p>Public routes (no JWT needed): register, login, logout, refresh, Shopify OAuth callback/status,
- * webhooks, all existing business APIs (Shopify sync, match, pricing, logistics, etc.).
- *
- * <p>Note: {@code logout} is intentionally public so users with an expired access token can
- * still clear cookies. The endpoint is idempotent — missing refresh token is a no-op.
- * {@code /callback} is public because it is reached via browser redirect from Shopify; the state
- * nonce (validated server-side) carries the user binding — no JWT is needed at that point.
+ * <p>Public: register/login/refresh, Shopify OAuth callback, {@code /session-token}, webhooks.
  */
 @Slf4j
 @Component
@@ -80,14 +76,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     /**
      * Exact paths that bypass JWT protection even if they fall under a protected prefix.
-     * <ul>
-     *   <li>PayPal webhook (under /billing/ but called by PayPal, not browsers).</li>
-     *   <li>Shopify webhook (under /shopify/ but verified via HMAC-SHA256).</li>
-     * </ul>
      */
     private static final Set<String> PUBLIC_EXACT_PATHS = Set.of(
             "/api/plugin/billing/paypal/webhook",
-            "/api/plugin/shopify/webhook"
+            "/api/plugin/shopify/webhook",
+            "/api/plugin/shopify/webhooks",
+            "/api/plugin/shopify/webhook/compliance",
+            "/api/plugin/shopify/webhooks/compliance",
+            "/api/plugin/shopify/auth/session-token",
+            "/api/plugin/shopify/auth/install-embedded"
     );
 
     @Resource
@@ -101,11 +98,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String token = readCookie(request, CookieHelper.ACCESS_COOKIE);
-        Long userId = jwtService.verifyAccessToken(token);
+        String token = readBearerToken(request);
+        if (token == null) {
+            token = readCookie(request, CookieHelper.ACCESS_COOKIE);
+        }
+        JwtService.AccessTokenClaims claims = jwtService.parseAccessToken(token);
 
-        if (userId == null) {
-            log.warn("JWT auth rejected: uri={} hasCookie={}", request.getRequestURI(), token != null);
+        if (claims == null || claims.userId() == null) {
+            log.warn("JWT auth rejected: uri={} hasBearer={} hasCookie={}",
+                    request.getRequestURI(),
+                    readBearerToken(request) != null,
+                    readCookie(request, CookieHelper.ACCESS_COOKIE) != null);
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
@@ -114,13 +117,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        request.setAttribute("userId", userId);
+        request.setAttribute("userId", claims.userId());
+        if (claims.shopName() != null && !claims.shopName().isBlank()) {
+            request.setAttribute("shopName", claims.shopName());
+        }
+        if (claims.shopDomain() != null && !claims.shopDomain().isBlank()) {
+            request.setAttribute("shopDomain", claims.shopDomain());
+        }
         filterChain.doFilter(request, response);
     }
 
     private boolean isProtected(HttpServletRequest request) {
         String uri = request.getRequestURI();
-        // Explicit public path (e.g. PayPal webhook) bypasses everything.
         if (PUBLIC_EXACT_PATHS.contains(uri)) {
             return false;
         }
@@ -133,6 +141,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         }
         return false;
+    }
+
+    private String readBearerToken(HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header == null) return null;
+        String trimmed = header.trim();
+        if (trimmed.length() > 7 && trimmed.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            String value = trimmed.substring(7).trim();
+            return value.isEmpty() ? null : value;
+        }
+        return null;
     }
 
     private String readCookie(HttpServletRequest request, String name) {

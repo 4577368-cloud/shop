@@ -6,6 +6,7 @@ import com.tang.plugin.domain.dto.logistics.LogisticsAcceptanceVO;
 import com.tang.plugin.domain.dto.logistics.LogisticsLineVO;
 import com.tang.plugin.domain.dto.logistics.PatchQuotesRequest;
 import com.tang.plugin.domain.dto.logistics.PatchQuotesResult;
+import com.tang.plugin.domain.dto.logistics.RemoveAcceptancesResult;
 import com.tang.plugin.domain.dto.logistics.UpsertAcceptancesRequest;
 import com.tang.plugin.domain.dto.logistics.UpsertAcceptancesResult;
 import com.tang.plugin.domain.entity.logistics.LogisticsAcceptDecision;
@@ -125,6 +126,25 @@ public class LogisticsAcceptanceService {
 
         return new PatchQuotesResult()
                 .setPatchedCount(patched)
+                .setAcceptances(listByShop(shopName));
+    }
+
+    /**
+     * Soft-delete acceptances by SKU id so the merchant can reopen decisions.
+     */
+    public RemoveAcceptancesResult remove(String shopName, List<String> skuIds) {
+        if (StringUtils.isBlank(shopName)) {
+            throw new CustomException("remove acceptances requires shopName");
+        }
+        int removed = 0;
+        if (skuIds != null) {
+            for (String skuId : skuIds) {
+                if (StringUtils.isBlank(skuId)) continue;
+                removed += repository.softDelete(shopName, skuId.trim());
+            }
+        }
+        return new RemoveAcceptancesResult()
+                .setRemovedCount(removed)
                 .setAcceptances(listByShop(shopName));
     }
 

@@ -29,7 +29,7 @@ public class CorsConfig {
         // allowCredentials=true requires allowedOriginPatterns (not allowedOrigins) in Spring 6.
         config.setAllowedOriginPatterns(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Content-Type", "Accept", "X-Internal-Token"));
+        config.setAllowedHeaders(List.of("Content-Type", "Accept", "Authorization", "X-Internal-Token"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

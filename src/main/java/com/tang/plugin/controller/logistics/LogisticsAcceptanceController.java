@@ -3,6 +3,8 @@ package com.tang.plugin.controller.logistics;
 import com.tang.plugin.domain.dto.logistics.LogisticsAcceptanceVO;
 import com.tang.plugin.domain.dto.logistics.PatchQuotesRequest;
 import com.tang.plugin.domain.dto.logistics.PatchQuotesResult;
+import com.tang.plugin.domain.dto.logistics.RemoveAcceptancesRequest;
+import com.tang.plugin.domain.dto.logistics.RemoveAcceptancesResult;
 import com.tang.plugin.domain.dto.logistics.UpsertAcceptancesRequest;
 import com.tang.plugin.domain.dto.logistics.UpsertAcceptancesResult;
 import com.tang.plugin.service.logistics.LogisticsAcceptanceService;
@@ -73,5 +75,15 @@ public class LogisticsAcceptanceController {
                                          @RequestBody PatchQuotesRequest request) {
         shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
         return logisticsAcceptanceService.patchQuotes(request);
+    }
+
+    /**
+     * Soft-delete acceptances (reopen decision) by SKU ids.
+     */
+    @PostMapping("/remove")
+    public RemoveAcceptancesResult remove(HttpServletRequest httpRequest,
+                                          @RequestBody RemoveAcceptancesRequest request) {
+        shopAccessGuard.assertOwner((Long) httpRequest.getAttribute("userId"), request.getShopName());
+        return logisticsAcceptanceService.remove(request.getShopName(), request.getSkuIds());
     }
 }

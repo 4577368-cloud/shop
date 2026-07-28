@@ -34,7 +34,7 @@ public class ShopifyWebhookStrategy {
         if (!ShopifyHmacUtils.verifyWebhookRawBodyHmac(rawBody, hmac, shopifyProperties.getApiSecret())) {
             log.error("Shopify webhook HMAC invalid shopDomain={} topic={} webhookId={}",
                     shopDomainHeader, topic, webhookId);
-            throw new CustomException("Shopify webhook HMAC invalid");
+            throw new CustomException("Shopify webhook HMAC invalid", 401);
         }
 
         String shopDomain = ShopifyGraphqlClient.normalizeDomain(shopDomainHeader).toLowerCase();

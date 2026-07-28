@@ -11,6 +11,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,6 +34,22 @@ public class ShopifyAuthController {
     private ShopifyAuthService shopifyAuthService;
     @Resource
     private ShopifyProperties shopifyProperties;
+    @Resource
+    private com.tang.plugin.service.user.ShopifySessionTokenService shopifySessionTokenService;
+
+    /**
+     * Exchange a Shopify App Bridge session token for a Tangbuy Bearer JWT (embedded mode).
+     * Public endpoint — authenticity comes from the Shopify-signed session JWT itself.
+     */
+    @PostMapping("/session-token")
+    public ResponseEntity<Map<String, Object>> sessionToken(@RequestBody Map<String, String> body) {
+        String token = body == null ? null : body.get("sessionToken");
+        Map<String, Object> result = shopifySessionTokenService.exchange(token);
+        if ("NEED_OAUTH".equals(String.valueOf(result.get("code")))) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(result);
+        }
+        return ResponseEntity.ok(result);
+    }
 
     @GetMapping("/install")
     public ResponseEntity<Void> install(@RequestParam("shop") String shop,
@@ -43,6 +61,28 @@ public class ShopifyAuthController {
                 .location(URI.create(redirectUrl))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .build();
+    }
+
+    /**
+     * Login-free OAuth start for App Store / Admin embedded install.
+     * Public — authenticity of the eventual binding comes from Shopify OAuth HMAC + shop email.
+     * Remembers {@code host} in a short-lived cookie so the callback can bounce back into Admin.
+     */
+    @GetMapping("/install-embedded")
+    public ResponseEntity<Void> installEmbedded(@RequestParam("shop") String shop,
+                                                  @RequestParam(value = "host", required = false) String host) {
+        String redirectUrl = shopifyAuthService.buildInstallUrlAutoProvision(shop);
+        log.info("Shopify embedded install redirect shop={} hostPresent={}", shop, StringUtils.isNotBlank(host));
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(redirectUrl))
+                .header(HttpHeaders.CACHE_CONTROL, "no-store");
+        if (StringUtils.isNotBlank(host)) {
+            // Round-trip Admin host across Shopify consent (not returned in OAuth query).
+            builder.header(HttpHeaders.SET_COOKIE,
+                    "tb_embed_host=" + URLEncoder.encode(host.trim(), StandardCharsets.UTF_8)
+                            + "; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=None");
+        }
+        return builder.build();
     }
 
     @GetMapping("/status")
@@ -85,14 +125,44 @@ public class ShopifyAuthController {
         String base = StringUtils.removeEnd(
                 StringUtils.trimToEmpty(shopifyProperties.getFrontendBaseUrl()), "/");
         // Forward status so the frontend can show the "already bound" notice without an extra API call.
-        String redirectUrl = base + "/authorize?shop="
-                + URLEncoder.encode(shopDomain, StandardCharsets.UTF_8)
-                + "&status=" + URLEncoder.encode(status, StandardCharsets.UTF_8);
-        log.info("Shopify auth callback result status={} shopDomain={}", status, shopDomain);
-        return ResponseEntity.status(HttpStatus.FOUND)
+        // Optional host/embedded query (passed through install state in a later iteration) keeps
+        // Admin iframe context when present on the callback request.
+        String host = params.get("host");
+        String embedded = params.get("embedded");
+        if (StringUtils.isBlank(host)) {
+            // Recover host remembered by /install-embedded
+            jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+            if (cookies != null) {
+                for (jakarta.servlet.http.Cookie c : cookies) {
+                    if ("tb_embed_host".equals(c.getName()) && StringUtils.isNotBlank(c.getValue())) {
+                        host = URLDecoder.decode(c.getValue(), StandardCharsets.UTF_8);
+                        embedded = "1";
+                        break;
+                    }
+                }
+            }
+        }
+        StringBuilder redirect = new StringBuilder(base)
+                .append("/authorize?shop=")
+                .append(URLEncoder.encode(shopDomain, StandardCharsets.UTF_8))
+                .append("&status=")
+                .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
+        if (StringUtils.isNotBlank(host)) {
+            redirect.append("&host=").append(URLEncoder.encode(host, StandardCharsets.UTF_8))
+                    .append("&embedded=1");
+        } else if ("1".equals(embedded) || "true".equalsIgnoreCase(embedded)) {
+            redirect.append("&embedded=1");
+        }
+        String redirectUrl = redirect.toString();
+        log.info("Shopify auth callback result status={} shopDomain={} embedded={}",
+                status, shopDomain, StringUtils.isNotBlank(host));
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
-                .header(HttpHeaders.CACHE_CONTROL, "no-store")
-                .build();
+                .header(HttpHeaders.CACHE_CONTROL, "no-store");
+        // Clear embed host cookie after use
+        builder.header(HttpHeaders.SET_COOKIE,
+                "tb_embed_host=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None");
+        return builder.build();
     }
 
     private static Map<String, String> extractQueryParams(HttpServletRequest request) {

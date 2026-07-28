@@ -49,25 +49,48 @@ public class JwtService {
     private static final String ISSUER = "tangbuy-plugin";
     private static final String AUDIENCE = "tangbuy-frontend";
 
-    /** Generate a signed JWT access token. */
+    /** Generate a signed JWT access token (standalone login — no shop claim). */
     public String generateAccessToken(Long userId, String email) {
+        return generateAccessToken(userId, email, null, null);
+    }
+
+    /**
+     * Generate a signed JWT access token.
+     * When {@code shopName}/{@code shopDomain} are set (embedded session exchange), controllers
+     * may prefer shop identity from the token over client-supplied query params.
+     */
+    public String generateAccessToken(Long userId, String email, String shopName, String shopDomain) {
         Instant now = Instant.now();
         Instant exp = now.plusSeconds(properties.getJwt().getAccessTtlSeconds());
-        return Jwts.builder()
+        var builder = Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("email", email)
                 .issuer(ISSUER)
                 .audience().add(AUDIENCE).and()
                 .claim("typ", "access")
-                .id(java.util.UUID.randomUUID().toString())  // jti for uniqueness / future revocation
+                .id(java.util.UUID.randomUUID().toString())
                 .issuedAt(Date.from(now))
-                .expiration(Date.from(exp))
-                .signWith(accessKey)
-                .compact();
+                .expiration(Date.from(exp));
+        if (StringUtils.isNotBlank(shopName)) {
+            builder.claim("shopName", shopName.trim());
+        }
+        if (StringUtils.isNotBlank(shopDomain)) {
+            builder.claim("shopDomain", shopDomain.trim().toLowerCase());
+        }
+        return builder.signWith(accessKey).compact();
     }
 
     /** Parse + verify a JWT access token. Returns userId, or returns null if invalid/expired. */
     public Long verifyAccessToken(String token) {
+        AccessTokenClaims claims = parseAccessToken(token);
+        return claims == null ? null : claims.userId();
+    }
+
+    /**
+     * Parse access token into structured claims (user + optional shop).
+     * Returns null when invalid/expired.
+     */
+    public AccessTokenClaims parseAccessToken(String token) {
         if (StringUtils.isBlank(token)) {
             return null;
         }
@@ -79,16 +102,20 @@ public class JwtService {
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
-            // Reject tokens that aren't access tokens (defense in depth against typ confusion).
             String typ = claims.get("typ", String.class);
             if (!"access".equals(typ)) {
                 return null;
             }
-            return Long.parseLong(claims.getSubject());
+            Long userId = Long.parseLong(claims.getSubject());
+            String shopName = claims.get("shopName", String.class);
+            String shopDomain = claims.get("shopDomain", String.class);
+            return new AccessTokenClaims(userId, shopName, shopDomain);
         } catch (JwtException | IllegalArgumentException e) {
             return null;
         }
     }
+
+    public record AccessTokenClaims(Long userId, String shopName, String shopDomain) {}
 
     // ===== Refresh Token (opaque random) =====
 

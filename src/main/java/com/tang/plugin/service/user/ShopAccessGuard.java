@@ -50,4 +50,21 @@ public class ShopAccessGuard {
             throw new CustomException("Shop not bound to current user", 403, "FORBIDDEN");
         }
     }
+
+    /**
+     * Prefer shop identity from the JWT (embedded session exchange) over a client-supplied name.
+     * When the token carries {@code shopName}, a mismatched client value is ignored (anti-IDOR).
+     *
+     * @return the shopName to use for {@link #assertOwner}
+     */
+    public String resolveShopName(jakarta.servlet.http.HttpServletRequest request, String clientShopName) {
+        Object fromToken = request.getAttribute("shopName");
+        if (fromToken instanceof String s && StringUtils.isNotBlank(s)) {
+            if (StringUtils.isNotBlank(clientShopName) && !s.equalsIgnoreCase(clientShopName.trim())) {
+                log.warn("Ignoring client shopName={} in favor of token shopName={}", clientShopName, s);
+            }
+            return s.trim();
+        }
+        return clientShopName;
+    }
 }

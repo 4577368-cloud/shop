@@ -10,18 +10,24 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingRequestWrapper;
 
 import java.io.IOException;
+import java.util.Set;
 
 /**
- * Caches raw body for Shopify webhook HMAC verification.
+ * Caches raw body for Shopify webhook HMAC verification (operational + compliance).
  */
 @Component
 public class ShopifyWebhookRawBodyFilter extends OncePerRequestFilter implements Ordered {
 
-    public static final String WEBHOOK_PATH = "/api/plugin/shopify/webhook";
+    private static final Set<String> WEBHOOK_PATHS = Set.of(
+            "/api/plugin/shopify/webhook",
+            "/api/plugin/shopify/webhooks",
+            "/api/plugin/shopify/webhook/compliance",
+            "/api/plugin/shopify/webhooks/compliance"
+    );
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !WEBHOOK_PATH.equals(request.getRequestURI());
+        return !WEBHOOK_PATHS.contains(request.getRequestURI());
     }
 
     @Override

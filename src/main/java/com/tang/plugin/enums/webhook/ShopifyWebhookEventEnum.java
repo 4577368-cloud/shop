@@ -7,8 +7,12 @@ import java.util.List;
  * Shopify webhook topics registered on OAuth when {@code registerOnAuth} is true.
  */
 public enum ShopifyWebhookEventEnum {
-    ORDERS_CREATE("orders/create", "ORDERS_CREATE", true),
-    ORDERS_UPDATED("orders/updated", "ORDERS_UPDATED", true),
+    /**
+     * Order topics kept for Dropshipping / legacy installs — do not register on
+     * this products-only App Store listing (no order scopes).
+     */
+    ORDERS_CREATE("orders/create", "ORDERS_CREATE", false),
+    ORDERS_UPDATED("orders/updated", "ORDERS_UPDATED", false),
     APP_UNINSTALLED("app/uninstalled", "APP_UNINSTALLED", true),
     /** Upsert local product mirror when a product is created in Shopify Admin. */
     PRODUCTS_CREATE("products/create", "PRODUCTS_CREATE", true),

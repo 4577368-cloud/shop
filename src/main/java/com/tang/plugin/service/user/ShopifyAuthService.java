@@ -69,6 +69,8 @@ public class ShopifyAuthService {
     private UserOauthStateRepository userOauthStateRepository;
     @Resource
     private JwtService jwtService;
+    @Resource
+    private ShopifyMerchantProvisionService merchantProvisionService;
 
     /**
      * Read-only auth status for a shop, used by the frontend to restore state after OAuth redirect.
@@ -166,6 +168,19 @@ public class ShopifyAuthService {
         if (userId == null) {
             throw new CustomException("User must be authenticated to install a shop", 401, "UNAUTHENTICATED");
         }
+        return buildInstallUrlInternal(userId, shop);
+    }
+
+    /**
+     * Login-free install for Shopify Admin / App Store embedded path.
+     * State uses sentinel {@link ShopifyMerchantProvisionService#AUTO_PROVISION_USER_ID};
+     * callback auto-creates/binds a Tangbuy user from the shop email.
+     */
+    public String buildInstallUrlAutoProvision(String shop) {
+        return buildInstallUrlInternal(ShopifyMerchantProvisionService.AUTO_PROVISION_USER_ID, shop);
+    }
+
+    private String buildInstallUrlInternal(Long userId, String shop) {
         assertConfigured();
         String shopDomain = normalizeAndValidateShop(shop);
         String rawState = UUID.randomUUID().toString().replace("-", "");
@@ -203,21 +218,33 @@ public class ShopifyAuthService {
         UserOauthState oauthState = consumeState(rawState, shopDomain);
         String shopName = toShopName(shopDomain);
 
-        // P2: refuse binding if the shop is already owned by another user.
-        // Check BEFORE token exchange so we don't overwrite the original owner's access_token
-        // (saveActiveAuth upserts by shop_domain, which would hijack credentials).
+        // Refuse binding / token overwrite if the shop is already owned by another user.
+        // Applies to both login and auto-provision paths (prevent credential hijack).
+        boolean autoProvision = oauthState.getUserId() == null
+                || oauthState.getUserId() <= ShopifyMerchantProvisionService.AUTO_PROVISION_USER_ID;
         Optional<UserShop> existingBinding = userShopRepository.findByShopName(shopName);
-        if (existingBinding.isPresent() && !existingBinding.get().getUserId().equals(oauthState.getUserId())) {
-            log.warn("Shop {} already bound to user {} (attempted bind by user {})",
-                    shopName, existingBinding.get().getUserId(), oauthState.getUserId());
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("status", "SHOP_ALREADY_BOUND");
-            result.put("shopDomain", shopDomain);
-            result.put("shopName", shopName);
-            result.put("authId", null);
-            result.put("fulfillmentMounted", false);
-            result.put("note", "Shop is already bound to another account. Contact support if you believe this is an error.");
-            return result;
+        if (existingBinding.isPresent()) {
+            Long ownerId = existingBinding.get().getUserId();
+            boolean sameOwner = !autoProvision && ownerId.equals(oauthState.getUserId());
+            boolean reclaimByAuto = autoProvision; // same shop reinstall: allow token refresh + keep owner
+            if (!sameOwner && !reclaimByAuto) {
+                log.warn("Shop {} already bound to user {} (attempted bind by user {})",
+                        shopName, ownerId, oauthState.getUserId());
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("status", "SHOP_ALREADY_BOUND");
+                result.put("shopDomain", shopDomain);
+                result.put("shopName", shopName);
+                result.put("authId", null);
+                result.put("fulfillmentMounted", false);
+                result.put("note", "Shop is already bound to another account. Contact support if you believe this is an error.");
+                return result;
+            }
+            if (autoProvision) {
+                // Reinstall from Admin: refresh offline token, keep existing owner.
+                log.info("Auto-provision reinstall: keep owner userId={} shopName={}", ownerId, shopName);
+            }
+        } else if (!autoProvision) {
+            // logged-in install of unbound shop — continue
         }
 
         JSONObject tokenJson;
@@ -247,9 +274,24 @@ public class ShopifyAuthService {
         log.info("Shopify auth saved shopDomain={} shopName={} authId={} expiring={}",
                 shopDomain, shopName, authId, StringUtils.isNotBlank(tokenJson.getString("refresh_token")));
 
-        UserShop binding = userShopRepository.upsertBinding(oauthState.getUserId(), shopName, shopDomain);
-        log.info("Shop bound userId={} shopName={} bindingId={}",
-                oauthState.getUserId(), shopName, binding.getId());
+        Long boundUserId;
+        try {
+            boundUserId = merchantProvisionService.resolveOwnerAfterOauth(
+                    oauthState.getUserId(), shopName, shopDomain, accessToken);
+        } catch (CustomException e) {
+            if ("SHOP_ALREADY_BOUND".equals(e.getCode())) {
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("status", "SHOP_ALREADY_BOUND");
+                result.put("shopDomain", shopDomain);
+                result.put("shopName", shopName);
+                result.put("authId", authId);
+                result.put("fulfillmentMounted", false);
+                result.put("note", e.getMessage());
+                return result;
+            }
+            throw e;
+        }
+        log.info("Shop bound userId={} shopName={} autoProvision={}", boundUserId, shopName, autoProvision);
 
         // Fulfillment mount intentionally skipped in phase-2.
         try {
@@ -271,9 +313,9 @@ public class ShopifyAuthService {
         result.put("shopDomain", shopDomain);
         result.put("shopName", shopName);
         result.put("authId", authId);
-        result.put("boundToUserId", oauthState.getUserId());
+        result.put("boundToUserId", boundUserId);
         result.put("fulfillmentMounted", false);
-        result.put("note", "Auth saved. Webhooks registered (orders/create, orders/updated, app/uninstalled).");
+        result.put("note", "Auth saved. Webhooks registered (app/uninstalled, products/create|update|delete).");
         return result;
     }
 

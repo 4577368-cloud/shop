@@ -161,6 +161,14 @@ public class UserShopRepository {
                 userId, shopName);
     }
 
+    /** GDPR shop/redact — remove all Tangbuy↔shop bindings for this shop. */
+    public int deleteByShopName(String shopName) {
+        if (shopName == null || shopName.isBlank()) {
+            return 0;
+        }
+        return jdbcTemplate.update("DELETE FROM user_shop WHERE shop_name = ?", shopName.trim());
+    }
+
     /**
      * Count active bindings for a user. Used to decide whether to show the
      * "bind your first shop" empty state.
