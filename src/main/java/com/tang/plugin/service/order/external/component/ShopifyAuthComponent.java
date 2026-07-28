@@ -27,6 +27,8 @@ public class ShopifyAuthComponent {
             "urn:ietf:params:oauth:grant-type:token-exchange";
     private static final String TOKEN_TYPE_OFFLINE =
             "urn:shopify:params:oauth:token-type:offline-access-token";
+    private static final String TOKEN_TYPE_ID =
+            "urn:ietf:params:oauth:token-type:id_token";
 
     @Resource
     private ShopifyProperties shopifyProperties;
@@ -50,6 +52,26 @@ public class ShopifyAuthComponent {
         body.put("code", code);
         body.put("expiring", "1");
         return postToken(shopDomain, body, "authorization-code");
+    }
+
+    /**
+     * Exchange a Shopify App Bridge session token (id_token) for an expiring offline access token.
+     * Preferred when the app is already installed in Admin — avoids a top-level OAuth redirect.
+     * @see <a href="https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/token-exchange">Token exchange</a>
+     */
+    public JSONObject exchangeSessionTokenForOffline(String shopDomain, String sessionToken) {
+        if (StringUtils.isBlank(sessionToken)) {
+            throw new CustomException("Shopify session token blank, shopDomain=" + shopDomain);
+        }
+        JSONObject body = new JSONObject();
+        body.put("client_id", StringUtils.trim(shopifyProperties.getApiKey()));
+        body.put("client_secret", StringUtils.trim(shopifyProperties.getApiSecret()));
+        body.put("grant_type", GRANT_TOKEN_EXCHANGE);
+        body.put("subject_token", sessionToken.trim());
+        body.put("subject_token_type", TOKEN_TYPE_ID);
+        body.put("requested_token_type", TOKEN_TYPE_OFFLINE);
+        body.put("expiring", "1");
+        return postToken(shopDomain, body, "session-token-exchange");
     }
 
     /** Rotate an expiring offline access token using its refresh token. */

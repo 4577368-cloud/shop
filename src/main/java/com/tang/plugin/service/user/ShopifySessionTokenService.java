@@ -1,5 +1,6 @@
 package com.tang.plugin.service.user;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.config.JwtAuthProperties;
 import com.tang.plugin.config.ShopifyProperties;
@@ -10,6 +11,7 @@ import com.tang.plugin.repository.AppUserRepository;
 import com.tang.plugin.repository.UserShopRepository;
 import com.tang.plugin.service.auth.JwtService;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
+import com.tang.plugin.service.order.external.component.ShopifyAuthComponent;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
@@ -33,6 +35,8 @@ import java.util.Optional;
  *   <li>Verify Shopify session JWT (API secret + aud = API key)</li>
  *   <li>If {@code user_shop} exists → issue Tangbuy JWT</li>
  *   <li>Else if ACTIVE offline token exists → silent provision + bind → issue JWT</li>
+ *   <li>Else if app is already installed in Admin → token-exchange session→offline,
+ *       save + bind, then issue JWT (no top-level OAuth redirect)</li>
  *   <li>Else → {@code NEED_OAUTH} so the client can open login-free install</li>
  * </ol>
  */
@@ -54,6 +58,8 @@ public class ShopifySessionTokenService {
     private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ShopifyMerchantProvisionService merchantProvisionService;
+    @Resource
+    private ShopifyAuthComponent shopifyAuthComponent;
 
     public Map<String, Object> exchange(String sessionToken) {
         if (StringUtils.isBlank(sessionToken)) {
@@ -64,7 +70,8 @@ public class ShopifySessionTokenService {
             throw new CustomException("Shopify app credentials not configured", 500, "SHOPIFY_CONFIG");
         }
 
-        Claims shopifyClaims = verifyShopifySessionToken(sessionToken.trim());
+        String rawSession = sessionToken.trim();
+        Claims shopifyClaims = verifyShopifySessionToken(rawSession);
         String dest = shopifyClaims.get("dest", String.class);
         String shopDomain = destToShopDomain(dest);
         if (StringUtils.isBlank(shopDomain)) {
@@ -76,19 +83,30 @@ public class ShopifySessionTokenService {
         Optional<UserShop> binding = userShopRepository.findByShopName(shopName);
         if (binding.isPresent()) {
             userId = binding.get().getUserId();
+            // Binding without offline token (Shopify list shows installed, our DB incomplete).
+            if (shopifyStoreAuthService.findActiveByShopDomain(shopDomain).isEmpty()) {
+                tryAcquireOfflineViaSessionToken(shopName, shopDomain, rawSession);
+            }
         } else {
             Optional<ShopifyStoreAuth> auth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain);
             if (auth.isEmpty()) {
-                log.info("Session token exchange: NEED_OAUTH shopName={}", shopName);
-                Map<String, Object> need = new LinkedHashMap<>();
-                need.put("status", "ERROR");
-                need.put("code", "NEED_OAUTH");
-                need.put("message", "Shop needs Shopify OAuth authorization first");
-                need.put("shopDomain", shopDomain);
-                need.put("shopName", shopName);
-                need.put("installPath", "/api/plugin/shopify/auth/install-embedded?shop="
-                        + java.net.URLEncoder.encode(shopDomain, java.nio.charset.StandardCharsets.UTF_8));
-                return need;
+                // App is already open in Admin ⇒ installed on Shopify. Prefer token exchange
+                // over a top-level OAuth breakout (which often fails in the sandboxed iframe).
+                boolean acquired = tryAcquireOfflineViaSessionToken(shopName, shopDomain, rawSession);
+                if (!acquired) {
+                    log.info("Session token exchange: NEED_OAUTH shopName={}", shopName);
+                    Map<String, Object> need = new LinkedHashMap<>();
+                    need.put("status", "ERROR");
+                    need.put("code", "NEED_OAUTH");
+                    need.put("message",
+                            "Shop is installed on Shopify but not linked yet. Complete Connect once.");
+                    need.put("shopDomain", shopDomain);
+                    need.put("shopName", shopName);
+                    need.put("shopifyInstalled", true);
+                    need.put("installPath", "/api/plugin/shopify/auth/install-embedded?shop="
+                            + java.net.URLEncoder.encode(shopDomain, java.nio.charset.StandardCharsets.UTF_8));
+                    return need;
+                }
             }
             userId = merchantProvisionService.ensureUserBoundToShop(shopName, shopDomain);
         }
@@ -108,6 +126,26 @@ public class ShopifySessionTokenService {
         out.put("userId", userId);
         out.put("email", user.getEmail());
         return out;
+    }
+
+    /**
+     * Session token → expiring offline Admin API token, then persist.
+     * @return true when an ACTIVE offline token is available afterwards
+     */
+    private boolean tryAcquireOfflineViaSessionToken(String shopName, String shopDomain,
+                                                     String sessionToken) {
+        try {
+            JSONObject tokenJson = shopifyAuthComponent.exchangeSessionTokenForOffline(
+                    shopDomain, sessionToken);
+            Long authId = shopifyStoreAuthService.saveActiveAuth(shopName, shopDomain, tokenJson);
+            log.info("Acquired offline token via session exchange shopName={} authId={}",
+                    shopName, authId);
+            return true;
+        } catch (Exception e) {
+            log.warn("Session→offline token exchange failed shopName={}: {}",
+                    shopName, e.getMessage());
+            return shopifyStoreAuthService.findActiveByShopDomain(shopDomain).isPresent();
+        }
     }
 
     private Claims verifyShopifySessionToken(String token) {
