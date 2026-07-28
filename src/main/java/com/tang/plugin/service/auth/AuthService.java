@@ -325,6 +325,20 @@ public class AuthService {
         return new AuthResult(accessToken, rawRefreshToken, toUserResponse(user));
     }
 
+    /**
+     * Issue Tangbuy session cookies after Shopify OAuth login (no password).
+     * Used by {@code /shopify/auth/callback} when the flow was started via {@code /shopify/auth/login}.
+     */
+    public AuthResult issueSessionForUserId(Long userId, HttpServletRequest httpRequest) {
+        AppUser user = requireUser(userId);
+        if (!"active".equals(user.getStatus())) {
+            throw new CustomException("Account inactive", 401, "ACCOUNT_INACTIVE");
+        }
+        userRepository.updateLastLogin(user.getId());
+        log.info("Shopify OAuth session issued: id={} email={}", user.getId(), maskEmail(user.getEmail()));
+        return issueTokens(user, httpRequest);
+    }
+
     private AppUser requireUser(Long userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException("User not found", 404, "USER_NOT_FOUND"));

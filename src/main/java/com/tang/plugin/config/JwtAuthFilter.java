@@ -33,7 +33,8 @@ import java.util.Set;
  *   <li>Business APIs under match/order/pricing/…</li>
  * </ul>
  *
- * <p>Public: register/login/refresh, Shopify OAuth callback, {@code /session-token}, webhooks.
+ * <p>Public: register/login/refresh, Shopify OAuth callback, {@code /session-token},
+ * {@code /install-embedded}, {@code /login} (Login with Shopify), webhooks.
  */
 @Slf4j
 @Component
@@ -84,7 +85,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             "/api/plugin/shopify/webhook/compliance",
             "/api/plugin/shopify/webhooks/compliance",
             "/api/plugin/shopify/auth/session-token",
-            "/api/plugin/shopify/auth/install-embedded"
+            "/api/plugin/shopify/auth/install-embedded",
+            "/api/plugin/shopify/auth/login"
     );
 
     @Resource

@@ -2,6 +2,8 @@ package com.tang.plugin.controller.auth;
 
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.config.ShopifyProperties;
+import com.tang.plugin.service.auth.AuthService;
+import com.tang.plugin.service.auth.CookieHelper;
 import com.tang.plugin.service.user.ShopifyAuthService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,12 +32,21 @@ import java.util.Map;
 @RequestMapping("/api/plugin/shopify/auth")
 public class ShopifyAuthController {
 
+    /** Cookie flag: OAuth started via standalone "Login with Shopify". */
+    private static final String LOGIN_FLOW_COOKIE = "tb_shopify_login";
+    /** Safe relative return path after Shopify login (e.g. /en/products). */
+    private static final String LOGIN_RETURN_COOKIE = "tb_login_return_to";
+
     @Resource
     private ShopifyAuthService shopifyAuthService;
     @Resource
     private ShopifyProperties shopifyProperties;
     @Resource
     private com.tang.plugin.service.user.ShopifySessionTokenService shopifySessionTokenService;
+    @Resource
+    private AuthService authService;
+    @Resource
+    private CookieHelper cookieHelper;
 
     /**
      * Exchange a Shopify App Bridge session token for a Tangbuy Bearer JWT (embedded mode).
@@ -82,7 +93,38 @@ public class ShopifyAuthController {
                     "tb_embed_host=" + URLEncoder.encode(host.trim(), StandardCharsets.UTF_8)
                             + "; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=None");
         }
+        // Clear any leftover standalone-login markers so callback does not set cookies in Admin.
+        builder.header(HttpHeaders.SET_COOKIE, clearCookie(LOGIN_FLOW_COOKIE));
+        builder.header(HttpHeaders.SET_COOKIE, clearCookie(LOGIN_RETURN_COOKIE));
         return builder.build();
+    }
+
+    /**
+     * Standalone "Login with Shopify": public OAuth start that auto-provisions/binds the shop
+     * owner and, on callback, sets {@code tb_access}/{@code tb_refresh} cookies.
+     *
+     * <p>Not for Admin iframe — embedded continues to use session-token / install-embedded.
+     *
+     * @param returnTo optional relative path (e.g. {@code /en/products}); open-redirect safe
+     */
+    @GetMapping("/login")
+    public ResponseEntity<Void> loginWithShopify(@RequestParam("shop") String shop,
+                                                   @RequestParam(value = "return_to", required = false) String returnTo) {
+        String redirectUrl = shopifyAuthService.buildInstallUrlAutoProvision(shop);
+        String safeReturn = sanitizeReturnTo(returnTo);
+        log.info("Shopify standalone login redirect shop={} returnTo={}", shop, safeReturn);
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .location(URI.create(redirectUrl))
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header(HttpHeaders.SET_COOKIE,
+                        LOGIN_FLOW_COOKIE + "=1; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax")
+                .header(HttpHeaders.SET_COOKIE,
+                        LOGIN_RETURN_COOKIE + "="
+                                + URLEncoder.encode(safeReturn, StandardCharsets.UTF_8)
+                                + "; Path=/; Max-Age=600; HttpOnly; Secure; SameSite=Lax")
+                // Avoid bouncing to Admin if a stale embed host cookie remains.
+                .header(HttpHeaders.SET_COOKIE, clearCookie("tb_embed_host"))
+                .build();
     }
 
     @GetMapping("/status")
@@ -141,10 +183,21 @@ public class ShopifyAuthController {
             }
         }
 
+        boolean shopifyLogin = cookieEquals(request, LOGIN_FLOW_COOKIE, "1");
+        String loginReturnTo = readCookie(request, LOGIN_RETURN_COOKIE);
+        if (StringUtils.isNotBlank(loginReturnTo)) {
+            loginReturnTo = URLDecoder.decode(loginReturnTo, StandardCharsets.UTF_8);
+        }
+        loginReturnTo = sanitizeReturnTo(loginReturnTo);
+
         String redirectUrl;
         boolean backToAdmin = StringUtils.isNotBlank(host)
                 || "1".equals(embedded)
                 || "true".equalsIgnoreCase(embedded);
+        // Standalone Login with Shopify must not bounce into Admin even if a stale host remains.
+        if (shopifyLogin) {
+            backToAdmin = false;
+        }
         String apiKey = StringUtils.trimToEmpty(shopifyProperties.getApiKey());
         if (backToAdmin && StringUtils.isNotBlank(apiKey) && StringUtils.isNotBlank(shopDomain)) {
             String handle = shopDomain.toLowerCase(java.util.Locale.ROOT)
@@ -155,6 +208,8 @@ public class ShopifyAuthController {
             redirectUrl = "https://admin.shopify.com/store/" + handle
                     + "/apps/" + apiKey
                     + "/en/authorize";
+        } else if (shopifyLogin && "OK".equals(status)) {
+            redirectUrl = base + loginReturnTo;
         } else {
             StringBuilder redirect = new StringBuilder(base)
                     .append("/authorize?shop=")
@@ -163,14 +218,72 @@ public class ShopifyAuthController {
                     .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
             redirectUrl = redirect.toString();
         }
-        log.info("Shopify auth callback result status={} shopDomain={} backToAdmin={}",
-                status, shopDomain, backToAdmin);
+        log.info("Shopify auth callback result status={} shopDomain={} backToAdmin={} shopifyLogin={}",
+                status, shopDomain, backToAdmin, shopifyLogin);
         ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store");
         builder.header(HttpHeaders.SET_COOKIE,
                 "tb_embed_host=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None");
+        builder.header(HttpHeaders.SET_COOKIE, clearCookie(LOGIN_FLOW_COOKIE));
+        builder.header(HttpHeaders.SET_COOKIE, clearCookie(LOGIN_RETURN_COOKIE));
+
+        if (shopifyLogin && "OK".equals(status) && !backToAdmin) {
+            Object bound = result.get("boundToUserId");
+            Long boundUserId = bound instanceof Number ? ((Number) bound).longValue() : null;
+            if (boundUserId != null) {
+                try {
+                    AuthService.AuthResult session = authService.issueSessionForUserId(boundUserId, request);
+                    builder.header(HttpHeaders.SET_COOKIE,
+                            cookieHelper.buildAccessCookie(session.accessToken()).toString());
+                    builder.header(HttpHeaders.SET_COOKIE,
+                            cookieHelper.buildRefreshCookie(session.refreshToken()).toString());
+                    log.info("Shopify login cookies set for userId={} shopDomain={}", boundUserId, shopDomain);
+                } catch (Exception e) {
+                    log.error("Shopify login failed to issue session userId={} shopDomain={}",
+                            boundUserId, shopDomain, e);
+                    // Fall through: still redirect; client will see unauthenticated state.
+                }
+            }
+        }
         return builder.build();
+    }
+
+    /** Relative path only — blocks open redirects. */
+    private static String sanitizeReturnTo(String returnTo) {
+        if (StringUtils.isBlank(returnTo)) {
+            return "/en/products";
+        }
+        String path = returnTo.trim();
+        if (!path.startsWith("/") || path.startsWith("//") || path.contains("://")) {
+            return "/en/products";
+        }
+        if (path.length() > 512) {
+            return "/en/products";
+        }
+        return path;
+    }
+
+    private static String clearCookie(String name) {
+        return name + "=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax";
+    }
+
+    private static boolean cookieEquals(HttpServletRequest request, String name, String expected) {
+        String value = readCookie(request, name);
+        return expected.equals(value);
+    }
+
+    private static String readCookie(HttpServletRequest request, String name) {
+        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+        if (cookies == null) {
+            return null;
+        }
+        for (jakarta.servlet.http.Cookie c : cookies) {
+            if (name.equals(c.getName()) && StringUtils.isNotBlank(c.getValue())) {
+                return c.getValue();
+            }
+        }
+        return null;
     }
 
     private static Map<String, String> extractQueryParams(HttpServletRequest request) {
