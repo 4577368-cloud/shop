@@ -17,7 +17,7 @@ public class ShopifyProperties {
 
     private String apiKey = "";
     private String apiSecret = "";
-    private String scopes = "read_orders,write_orders,read_products,write_products";
+    private String scopes = "read_products,write_products";
     /** OAuth callback, e.g. https://host/api/plugin/shopify/auth/callback */
     private String redirectUri = "http://localhost:8088/api/plugin/shopify/auth/callback";
     /** Public base for webhook callback, e.g. https://host */
