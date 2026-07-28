@@ -149,8 +149,12 @@ public class ShopifyAuthController {
         if (backToAdmin && StringUtils.isNotBlank(apiKey) && StringUtils.isNotBlank(shopDomain)) {
             String handle = shopDomain.toLowerCase(java.util.Locale.ROOT)
                     .replace(".myshopify.com", "");
-            // Re-open the app inside Admin. App URL (/install) then session-gates into authorize.
-            redirectUrl = "https://admin.shopify.com/store/" + handle + "/apps/" + apiKey;
+            // Re-open inside Admin on workbench step 1 (authorize).
+            // Requires Partner App URL = https://ai.tangbuy.com (not .../en/install),
+            // so Admin appends /en/authorize under the app origin.
+            redirectUrl = "https://admin.shopify.com/store/" + handle
+                    + "/apps/" + apiKey
+                    + "/en/authorize";
         } else {
             StringBuilder redirect = new StringBuilder(base)
                     .append("/authorize?shop=")
