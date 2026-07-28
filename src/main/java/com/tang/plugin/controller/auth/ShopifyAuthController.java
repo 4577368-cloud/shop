@@ -118,19 +118,17 @@ public class ShopifyAuthController {
                             + "queryString=" + request.getQueryString());
         }
         Map<String, Object> result = shopifyAuthService.handleCallback(params);
-        // On success redirect back to the frontend authorize page so the SPA can restore state
-        // (localStorage + /status). Failures still surface as JSON via the thrown exception above.
+        // On success bounce back into the right host:
+        // - Embedded (Admin): return to admin.shopify.com/apps/{apiKey} so the merchant
+        //   continues inside Admin iframe (not a second standalone "install" tab).
+        // - Standalone: SPA /authorize with shop + status for localStorage restore.
         String shopDomain = String.valueOf(result.get("shopDomain"));
         String status = String.valueOf(result.getOrDefault("status", "OK"));
         String base = StringUtils.removeEnd(
                 StringUtils.trimToEmpty(shopifyProperties.getFrontendBaseUrl()), "/");
-        // Forward status so the frontend can show the "already bound" notice without an extra API call.
-        // Optional host/embedded query (passed through install state in a later iteration) keeps
-        // Admin iframe context when present on the callback request.
         String host = params.get("host");
         String embedded = params.get("embedded");
         if (StringUtils.isBlank(host)) {
-            // Recover host remembered by /install-embedded
             jakarta.servlet.http.Cookie[] cookies = request.getCookies();
             if (cookies != null) {
                 for (jakarta.servlet.http.Cookie c : cookies) {
@@ -142,24 +140,30 @@ public class ShopifyAuthController {
                 }
             }
         }
-        StringBuilder redirect = new StringBuilder(base)
-                .append("/authorize?shop=")
-                .append(URLEncoder.encode(shopDomain, StandardCharsets.UTF_8))
-                .append("&status=")
-                .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
-        if (StringUtils.isNotBlank(host)) {
-            redirect.append("&host=").append(URLEncoder.encode(host, StandardCharsets.UTF_8))
-                    .append("&embedded=1");
-        } else if ("1".equals(embedded) || "true".equalsIgnoreCase(embedded)) {
-            redirect.append("&embedded=1");
+
+        String redirectUrl;
+        boolean backToAdmin = StringUtils.isNotBlank(host)
+                || "1".equals(embedded)
+                || "true".equalsIgnoreCase(embedded);
+        String apiKey = StringUtils.trimToEmpty(shopifyProperties.getApiKey());
+        if (backToAdmin && StringUtils.isNotBlank(apiKey) && StringUtils.isNotBlank(shopDomain)) {
+            String handle = shopDomain.toLowerCase(java.util.Locale.ROOT)
+                    .replace(".myshopify.com", "");
+            // Re-open the app inside Admin. App URL (/install) then session-gates into authorize.
+            redirectUrl = "https://admin.shopify.com/store/" + handle + "/apps/" + apiKey;
+        } else {
+            StringBuilder redirect = new StringBuilder(base)
+                    .append("/authorize?shop=")
+                    .append(URLEncoder.encode(shopDomain, StandardCharsets.UTF_8))
+                    .append("&status=")
+                    .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
+            redirectUrl = redirect.toString();
         }
-        String redirectUrl = redirect.toString();
-        log.info("Shopify auth callback result status={} shopDomain={} embedded={}",
-                status, shopDomain, StringUtils.isNotBlank(host));
+        log.info("Shopify auth callback result status={} shopDomain={} backToAdmin={}",
+                status, shopDomain, backToAdmin);
         ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store");
-        // Clear embed host cookie after use
         builder.header(HttpHeaders.SET_COOKIE,
                 "tb_embed_host=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None");
         return builder.build();
