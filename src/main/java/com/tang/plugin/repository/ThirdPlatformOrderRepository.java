@@ -148,7 +148,7 @@ public class ThirdPlatformOrderRepository {
                     INSERT INTO third_platform_order
                     (shop_name, shop_type, outer_order_id, order_name, financial_status, fulfillment_status,
                      currency, total_price, platform_created_at, platform_updated_at, del_flag, created_at, updated_at, draft_order_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     new String[]{"id"});
             ps.setString(1, order.getShopName());
@@ -167,6 +167,11 @@ public class ThirdPlatformOrderRepository {
             ps.setTimestamp(10, toTimestamp(order.getPlatformUpdatedAt()));
             ps.setTimestamp(11, Timestamp.from(now));
             ps.setTimestamp(12, Timestamp.from(now));
+            if (order.getDraftOrderId() == null) {
+                ps.setNull(13, java.sql.Types.BIGINT);
+            } else {
+                ps.setLong(13, order.getDraftOrderId());
+            }
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();
