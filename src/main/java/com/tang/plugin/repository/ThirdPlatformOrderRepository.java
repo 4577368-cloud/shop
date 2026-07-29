@@ -41,11 +41,12 @@ public class ThirdPlatformOrderRepository {
             .setPlatformUpdatedAt(toInstant(rs.getTimestamp("platform_updated_at")))
             .setDelFlag(rs.getInt("del_flag"))
             .setCreatedAt(toInstant(rs.getTimestamp("created_at")))
-            .setUpdatedAt(toInstant(rs.getTimestamp("updated_at")));
+            .setUpdatedAt(toInstant(rs.getTimestamp("updated_at")))
+            .setDraftOrderId(rs.getObject("draft_order_id") == null ? null : rs.getLong("draft_order_id"));
 
     private static final String COLUMNS = """
             id, shop_name, shop_type, outer_order_id, order_name, financial_status, fulfillment_status,
-            currency, total_price, platform_created_at, platform_updated_at, del_flag, created_at, updated_at
+            currency, total_price, platform_created_at, platform_updated_at, del_flag, created_at, updated_at, draft_order_id
             """;
 
     @Resource
@@ -124,6 +125,20 @@ public class ThirdPlatformOrderRepository {
                 ROW_MAPPER, shopName);
     }
 
+
+    public void updateDraftOrderId(Long headerId, Long draftOrderId) {
+        if (headerId == null || draftOrderId == null) {
+            return;
+        }
+        try {
+            jdbcTemplate.update(
+                    "UPDATE third_platform_order SET draft_order_id = ?, updated_at = ? WHERE id = ?",
+                    draftOrderId, Timestamp.from(Instant.now()), headerId);
+        } catch (Exception e) {
+            log.warn("updateDraftOrderId failed id={} draftOrderId={}: {}", headerId, draftOrderId, e.getMessage());
+        }
+    }
+
     private Long insert(ThirdPlatformOrder order) {
         Instant now = Instant.now();
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -132,7 +147,7 @@ public class ThirdPlatformOrderRepository {
                     """
                     INSERT INTO third_platform_order
                     (shop_name, shop_type, outer_order_id, order_name, financial_status, fulfillment_status,
-                     currency, total_price, platform_created_at, platform_updated_at, del_flag, created_at, updated_at)
+                     currency, total_price, platform_created_at, platform_updated_at, del_flag, created_at, updated_at, draft_order_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     new String[]{"id"});
