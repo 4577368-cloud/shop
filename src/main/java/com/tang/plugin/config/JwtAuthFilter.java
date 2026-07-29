@@ -65,6 +65,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             // both authenticated and ownership-checked.
             "/api/plugin/match/",
             "/api/plugin/order/",
+            "/api/plugin/draft/",
             "/api/plugin/pricing/",
             "/api/plugin/logistics/",
             "/api/plugin/catalog/",

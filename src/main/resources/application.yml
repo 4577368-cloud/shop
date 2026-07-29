@@ -1,3 +1,23 @@
+
+# Lightweight alignment: exclude Redis/Nacos auto-config unless k8s profile
+spring.autoconfigure.exclude: >
+  org.redisson.spring.starter.RedissonAutoConfigurationV2,
+  org.redisson.spring.starter.RedissonAutoConfiguration
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: delFlag
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  mapper-locations: classpath*:/mapper/**/*.xml
+
+sa-token:
+  # JWT remains primary auth in Phase 0; Sa-Token on classpath for future dual-track.
+  is-print: false
+
 spring:
   application:
     name: tangbuy-plugin
@@ -24,6 +44,15 @@ tang:
   plugin:
     lock:
       enabled: false
+    redis:
+      enabled: false
+    mq:
+      enabled: false
+    remote:
+      order:
+        enabled: false
+        base-url: ${TANG_PLUGIN_REMOTE_ORDER_BASE_URL:}
+    full-mode: false
     exchange-rate:
       default: 1.0
     shopify:

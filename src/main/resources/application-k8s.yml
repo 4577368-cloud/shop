@@ -1,0 +1,25 @@
+# Company K8s profile — Nacos shared configs + Redis + RocketMQ
+spring:
+  config:
+    import:
+      - optional:nacos:tang-middleware-mysql.yml
+      - optional:nacos:tang-middleware-redis.yml
+      - optional:nacos:tang-middleware-rocketmq.yml
+      - optional:nacos:tang-common.yml
+      - optional:nacos:${spring.application.name}.yml
+  autoconfigure:
+    exclude: []
+
+tang:
+  plugin:
+    redis:
+      enabled: true
+    lock:
+      enabled: true
+    mq:
+      enabled: true
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAMESRV:127.0.0.1:9876}
+  producer:
+    group: tangbuy-plugin-producer

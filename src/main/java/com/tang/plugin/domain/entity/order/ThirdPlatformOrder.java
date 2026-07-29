@@ -27,4 +27,6 @@ public class ThirdPlatformOrder {
     private Integer delFlag;
     private Instant createdAt;
     private Instant updatedAt;
+    /** Linked t_draft_order.id (dropship domain). */
+    private Long draftOrderId;
 }

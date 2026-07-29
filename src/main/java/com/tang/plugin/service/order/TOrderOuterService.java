@@ -11,9 +11,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Outer-order service: JDBC-persisted order header (idempotency lookup + draft save).
- * Header idempotency key = (shop_type, shop_name, outer_order_id). Order lines persist via
- * OrderLinePersistenceService within the caller's transaction.
+ * Outer-order service: JDBC staging header + draft-order domain write.
  */
 @Slf4j
 @Service
@@ -23,6 +21,8 @@ public class TOrderOuterService {
     private ThirdPlatformOrderRepository thirdPlatformOrderRepository;
     @Resource
     private OrderLinePersistenceService orderLinePersistenceService;
+    @Resource
+    private DraftOrderAssembler draftOrderAssembler;
 
     public List<Long> listOrderIdsByChannelOuterShopNameAndOuterOrderId(
             String channel, String shopName, String outerOrderId) {
@@ -31,6 +31,10 @@ public class TOrderOuterService {
 
     public Long saveDraftOrderSkeleton(PluginShopBO shopBO, ExternalOrder externalOrder) {
         String shopType = shopBO.getShopType() == null ? null : shopBO.getShopType().name();
+
+        // Draft domain first (idempotent by shop+outer)
+        Long draftOrderId = draftOrderAssembler.upsertFromExternal(shopBO, externalOrder, null);
+
         ThirdPlatformOrder header = new ThirdPlatformOrder()
                 .setShopName(shopBO.getShopName())
                 .setShopType(shopType)
@@ -42,12 +46,16 @@ public class TOrderOuterService {
                 .setTotalPrice(externalOrder.getTotalPrice())
                 .setPlatformCreatedAt(externalOrder.getCreatedAt())
                 .setPlatformUpdatedAt(externalOrder.getUpdatedAt())
+                .setDraftOrderId(draftOrderId)
                 .setDelFlag(0);
 
         Long id = thirdPlatformOrderRepository.saveIfAbsent(header);
-        log.info("Saved draft order header id={} shopName={} orderId={}",
-                id, shopBO.getShopName(), externalOrder.getOrderId());
-        orderLinePersistenceService.persist(shopBO, externalOrder, id);
+        if (draftOrderId != null) {
+            thirdPlatformOrderRepository.updateDraftOrderId(id, draftOrderId);
+        }
+        log.info("Saved draft order header id={} draftOrderId={} shopName={} orderId={}",
+                id, draftOrderId, shopBO.getShopName(), externalOrder.getOrderId());
+        orderLinePersistenceService.persist(shopBO, externalOrder, draftOrderId != null ? draftOrderId : id);
         return id;
     }
 }

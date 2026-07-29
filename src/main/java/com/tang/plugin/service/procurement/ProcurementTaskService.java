@@ -25,6 +25,10 @@ import java.util.List;
  */
 @Slf4j
 @Service
+@Deprecated
+/**
+ * @deprecated Prefer draft-order purchaseOrder + MQ state sync (Phase 3/4).
+ */
 public class ProcurementTaskService {
 
     @Resource

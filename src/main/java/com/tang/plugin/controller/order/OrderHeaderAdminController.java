@@ -1,5 +1,6 @@
 package com.tang.plugin.controller.order;
 
+import com.tang.plugin.domain.dto.order.ShopOrderHeaderVO;
 import com.tang.plugin.domain.entity.order.ThirdPlatformOrder;
 import com.tang.plugin.service.order.OrderHeaderQueryService;
 import com.tang.plugin.service.user.ShopAccessGuard;
@@ -13,9 +14,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * Internal integration endpoints for persisted order headers (NOT a workbench UI). Read-only.
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/plugin/order/header")
@@ -27,17 +25,17 @@ public class OrderHeaderAdminController {
     private ShopAccessGuard shopAccessGuard;
 
     @GetMapping("/get")
-    public ThirdPlatformOrder findByOuterOrderId(HttpServletRequest request,
-                                                 @RequestParam String shopName,
-                                                 @RequestParam String outerOrderId) {
+    public ShopOrderHeaderVO findByOuterOrderId(HttpServletRequest request,
+                                                @RequestParam String shopName,
+                                                @RequestParam String outerOrderId) {
         shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
-        return orderHeaderQueryService.findByOuterOrderId(shopName, outerOrderId).orElse(null);
+        return orderHeaderQueryService.findWithLines(shopName, outerOrderId).orElse(null);
     }
 
     @GetMapping("/list")
-    public List<ThirdPlatformOrder> listByShop(HttpServletRequest request,
-                                               @RequestParam String shopName) {
+    public List<ShopOrderHeaderVO> listByShop(HttpServletRequest request,
+                                              @RequestParam String shopName) {
         shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
-        return orderHeaderQueryService.listByShop(shopName);
+        return orderHeaderQueryService.listByShopWithLines(shopName);
     }
 }

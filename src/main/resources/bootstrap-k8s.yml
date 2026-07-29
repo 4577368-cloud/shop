@@ -1,0 +1,11 @@
+# Activate with: spring.profiles.active=k8s
+spring:
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:tang}
+      config:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        file-extension: yml
+        namespace: ${NACOS_NAMESPACE:tang}

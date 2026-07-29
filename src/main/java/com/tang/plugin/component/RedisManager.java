@@ -1,73 +1,57 @@
 package com.tang.plugin.component;
 
-import com.tang.common.core.exception.CustomException;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
- * Skeleton distributed-lock facade.
- * Replace internals with Redisson when wiring real Redis.
+ * Distributed cache / lock facade.
+ * LocalRedisManager (default) or RedissonRedisManager (when Redis is configured).
  */
-@Slf4j
-@Component
-public class RedisManager {
+public interface RedisManager {
 
-    private final ConcurrentHashMap<String, ReentrantLock> localLocks = new ConcurrentHashMap<>();
+    <T> T lockAround(String lockKey, Supplier<T> supplier);
 
-    @Value("${tang.plugin.lock.enabled:false}")
-    private boolean lockEnabled;
+    <T> T lockAround(String lockKey, long waitMs, long leaseMs, Supplier<T> supplier);
 
-    public <T> T lockAround(String lockKey, Supplier<T> supplier) {
-        return lockAround(lockKey, 1000, 5000, supplier);
+    void lockAround(String lockKey, Runnable runnable);
+
+    void lockAround(String lockKey, long waitMs, long leaseMs, Runnable runnable);
+
+    <T> T lockAroundCallable(String lockKey, Callable<T> callable);
+
+    default void setString(String key, String value) {
     }
 
-    public <T> T lockAround(String lockKey, long waitMs, long leaseMs, Supplier<T> supplier) {
-        if (!lockEnabled) {
-            return supplier.get();
-        }
-        ReentrantLock lock = localLocks.computeIfAbsent(lockKey, k -> new ReentrantLock());
-        boolean locked;
-        try {
-            locked = lock.tryLock(waitMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CustomException("Acquire lock interrupted: " + lockKey, e);
-        }
-        if (!locked) {
-            throw new CustomException("Acquire lock failed: " + lockKey);
-        }
-        try {
-            return supplier.get();
-        } finally {
-            if (lock.isHeldByCurrentThread()) {
-                lock.unlock();
-            }
-        }
+    default void setString(String key, String value, long ttlSeconds) {
     }
 
-    public void lockAround(String lockKey, Runnable runnable) {
-        lockAround(lockKey, () -> {
-            runnable.run();
-            return null;
-        });
+    default String getString(String key) {
+        return null;
     }
 
-    public <T> T lockAroundCallable(String lockKey, Callable<T> callable) {
-        return lockAround(lockKey, () -> {
-            try {
-                return callable.call();
-            } catch (RuntimeException e) {
-                throw e;
-            } catch (Exception e) {
-                throw new CustomException("Locked callable failed: " + lockKey, e);
-            }
-        });
+    default void delString(String key) {
+    }
+
+    default <T> void setObject(String key, T obj) {
+    }
+
+    default <T> void setObject(String key, T obj, long ttlSeconds) {
+    }
+
+    default <T> T getObject(String key) {
+        return null;
+    }
+
+    default void setMap(String key, Map<String, String> value) {
+    }
+
+    default Map<String, String> getMap(String key) {
+        return Map.of();
+    }
+
+    default Set<String> getSet(String key) {
+        return Set.of();
     }
 }
