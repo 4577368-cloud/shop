@@ -76,15 +76,19 @@ public class SkuAlignV1Controller {
     }
 
     @PostMapping("/variants/bind")
-    public void manualBind(@RequestParam String variantId,
+    public void manualBind(HttpServletRequest request,
+                           @RequestParam String variantId,
                            @RequestBody SkuAlignManualBindDTO body) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
         body.setThirdPlatformSkuId(variantId);
         skuAlignV1Service.manualBind(body);
     }
 
     @PostMapping("/variants/block")
-    public void blockVariant(@RequestParam String variantId,
+    public void blockVariant(HttpServletRequest request,
+                             @RequestParam String variantId,
                              @RequestBody SkuAlignBlockVariantDTO body) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
         body.setThirdPlatformSkuId(variantId);
         skuAlignV1Service.blockVariant(body);
     }
@@ -100,7 +104,12 @@ public class SkuAlignV1Controller {
     }
 
     @PostMapping("/knowledge/alias")
-    public void recordAlias(@RequestBody SkuAlignAliasKnowledgeDTO body) {
+    public void recordAlias(HttpServletRequest request,
+                            @RequestBody SkuAlignAliasKnowledgeDTO body) {
+        // Alias knowledge is shop-scoped; require ownership when shopName is present.
+        if (body.getShopName() != null && !body.getShopName().isBlank()) {
+            shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
+        }
         skuAlignV1Service.recordAlias(body);
     }
 }

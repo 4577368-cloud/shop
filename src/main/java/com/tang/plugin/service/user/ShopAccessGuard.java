@@ -43,7 +43,17 @@ public class ShopAccessGuard {
         if (StringUtils.isBlank(shopName)) {
             throw new CustomException("shopName is required", 400, "MISSING_SHOP_NAME");
         }
-        Optional<UserShop> binding = userShopRepository.findByShopName(shopName);
+        String normalized = shopName.trim().toLowerCase();
+        Optional<UserShop> binding = userShopRepository.findByShopName(normalized);
+        if (binding.isEmpty() && normalized.endsWith(".myshopify.com")) {
+            String shortName = normalized.substring(0, normalized.length() - ".myshopify.com".length());
+            if (StringUtils.isNotBlank(shortName)) {
+                binding = userShopRepository.findByShopName(shortName);
+            }
+        }
+        if (binding.isEmpty() && !normalized.contains(".")) {
+            binding = userShopRepository.findByShopName(normalized + ".myshopify.com");
+        }
         if (binding.isEmpty() || !binding.get().getUserId().equals(userId)) {
             log.warn("Shop access denied: userId={} shopName={}", userId, shopName);
             // Same error whether the shop is unbound or owned by another user (no enumeration).
