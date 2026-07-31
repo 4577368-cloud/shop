@@ -17,6 +17,7 @@ public class ShopBundleVO {
     private String parentVariantId;
     private String parentTitle;
     private BigDecimal parentPrice;
+    private BigDecimal discountPercent;
     private String status;
     private boolean managedByApp;
     private String errorMessage;
@@ -29,5 +30,6 @@ public class ShopBundleVO {
         private String productId;
         private int quantity;
         private String title;
+        private String variantId;
     }
 }

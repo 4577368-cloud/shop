@@ -1211,6 +1211,7 @@ CREATE TABLE IF NOT EXISTS shop_product_bundle (
     parent_variant_id       VARCHAR(128),
     parent_title            VARCHAR(1024),
     parent_price            DECIMAL(18, 4),
+    discount_percent        DECIMAL(5, 2),
     components_json         TEXT          NOT NULL,
     status                  VARCHAR(32)   NOT NULL,
     shopify_operation_id    VARCHAR(128),
@@ -1226,5 +1227,10 @@ CREATE INDEX IF NOT EXISTS idx_spb_shop_context
     ON shop_product_bundle (shop_name, context_product_id, del_flag);
 CREATE INDEX IF NOT EXISTS idx_spb_shop_parent
     ON shop_product_bundle (shop_name, parent_product_id, del_flag);
+CREATE INDEX IF NOT EXISTS idx_spb_shop_parent_variant
+    ON shop_product_bundle (shop_name, parent_variant_id, del_flag);
 CREATE INDEX IF NOT EXISTS idx_spb_shop_status
     ON shop_product_bundle (shop_name, status, del_flag);
+
+-- Live DBs created before discount_percent: safe no-op when column exists.
+ALTER TABLE shop_product_bundle ADD COLUMN IF NOT EXISTS discount_percent DECIMAL(5, 2);

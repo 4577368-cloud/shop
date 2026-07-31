@@ -18,6 +18,8 @@ public class ShopProductBundle {
     private String parentVariantId;
     private String parentTitle;
     private BigDecimal parentPrice;
+    /** Optional percent discount for Function / UI (null = none). */
+    private BigDecimal discountPercent;
     private String componentsJson;
     private ShopBundleStatus status;
     private String shopifyOperationId;

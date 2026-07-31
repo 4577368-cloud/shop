@@ -10,7 +10,9 @@ import com.tang.plugin.domain.dto.bundle.ShopBundleVO;
 import com.tang.plugin.domain.entity.bundle.ShopProductBundle;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.domain.query.bundle.ShopBundleCreateReq;
+import com.tang.plugin.domain.query.bundle.ShopBundleUpdateReq;
 import com.tang.plugin.enums.bundle.ShopBundleStatus;
+import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.bundle.ShopProductBundleRepository;
 import com.tang.plugin.service.bundle.component.ShopifyProductBundleComponent;
 import com.tang.plugin.service.user.ShopifyStoreAuthService;
@@ -42,6 +44,8 @@ public class ShopBundleService {
     private ShopifyProductBundleComponent bundleComponent;
     @Resource
     private ShopifyStoreAuthService shopifyStoreAuthService;
+    @Resource
+    private ShopProductBindingRepository shopProductBindingRepository;
 
     public BundlesFeatureVO feature(String shopName) {
         ShopifyStoreAuth auth = requireAuth(shopName);
@@ -159,33 +163,23 @@ public class ShopBundleService {
                     "Shop is not eligible for Shopify Bundles (check checkout / sales channel)"));
         }
 
-        List<ShopifyProductBundleComponent.ComponentSpec> specs = normalizeComponents(req);
+        List<ShopifyProductBundleComponent.ComponentSpec> specs = normalizeComponents(
+                req.getContextProductId(), req.getComponents());
+        assertAllComponentsBound(req.getShopName(), specs);
+
         String title = StringUtils.trimToEmpty(req.getTitle());
         if (StringUtils.isBlank(title)) {
             title = "Bundle " + req.getContextProductId();
         }
 
-        JSONArray snapshot = new JSONArray();
-        for (ShopifyProductBundleComponent.ComponentSpec spec : specs) {
-            JSONObject c = new JSONObject();
-            c.put("productId", numericId(spec.productId()));
-            c.put("quantity", spec.quantity());
-            try {
-                JSONObject p = bundleComponent.fetchProductOptions(
-                        req.getShopName(), auth.getShopDomain(), auth.getAccessToken(),
-                        ShopifyProductBundleComponent.toProductGid(spec.productId()));
-                if (p != null) c.put("title", p.getString("title"));
-            } catch (Exception ignored) {
-                /* title optional in snapshot */
-            }
-            snapshot.add(c);
-        }
+        JSONArray snapshot = snapshotComponents(req.getShopName(), auth, specs);
 
         ShopProductBundle row = new ShopProductBundle()
                 .setShopName(req.getShopName())
                 .setContextProductId(numericId(req.getContextProductId()))
                 .setParentTitle(title)
                 .setParentPrice(req.getParentPrice())
+                .setDiscountPercent(req.getDiscountPercent())
                 .setComponentsJson(snapshot.toJSONString())
                 .setStatus(ShopBundleStatus.CREATING)
                 .setManagedByApp(1);
@@ -198,30 +192,168 @@ public class ShopBundleService {
             row.setShopifyOperationId(operationId);
             JSONObject op = pollUntilDone(req.getShopName(), auth, operationId);
             applyOperationResult(row, op);
-            if (row.getStatus() == ShopBundleStatus.ACTIVE
-                    && req.getParentPrice() != null
-                    && StringUtils.isNotBlank(row.getParentProductId())
-                    && StringUtils.isNotBlank(row.getParentVariantId())) {
-                try {
-                    bundleComponent.updateParentVariantPrice(
-                            req.getShopName(),
-                            auth.getShopDomain(),
-                            auth.getAccessToken(),
-                            row.getParentProductId(),
-                            row.getParentVariantId(),
-                            req.getParentPrice());
-                    row.setParentPrice(req.getParentPrice());
-                } catch (Exception priceErr) {
-                    log.warn("Bundle parent price update skipped shop={} id={}: {}",
-                            req.getShopName(), id, priceErr.getMessage());
-                }
-            }
+            afterActiveWrite(req.getShopName(), auth, row, req.getParentPrice(), req.getDiscountPercent());
             bundleRepository.updateAfterPoll(row);
             return toVo(row);
         } catch (Exception e) {
             log.error("Bundle create failed shop={} id={}", req.getShopName(), id, e);
             bundleRepository.markFailed(id, e.getMessage());
             throw e instanceof CustomException ce ? ce : new CustomException(e.getMessage());
+        }
+    }
+
+    public ShopBundleVO updateAndWait(ShopBundleUpdateReq req) {
+        if (req == null || req.getBundleId() == null || StringUtils.isBlank(req.getShopName())) {
+            throw new CustomException("shopName and bundleId required");
+        }
+        ShopProductBundle row = bundleRepository.findById(req.getBundleId())
+                .orElseThrow(() -> new CustomException("Bundle not found"));
+        if (!req.getShopName().equals(row.getShopName())) {
+            throw new CustomException("Bundle shop mismatch");
+        }
+        if (row.getManagedByApp() != 1) {
+            throw new CustomException("Bundle is managed by another app");
+        }
+        if (StringUtils.isBlank(row.getParentProductId())) {
+            throw new CustomException("Bundle has no Shopify parent yet — create first");
+        }
+        ShopifyStoreAuth auth = requireAuth(req.getShopName());
+        List<ShopifyProductBundleComponent.ComponentSpec> specs = normalizeComponents(
+                row.getContextProductId(), req.getComponents());
+        assertAllComponentsBound(req.getShopName(), specs);
+
+        String title = StringUtils.defaultIfBlank(StringUtils.trimToEmpty(req.getTitle()), row.getParentTitle());
+        JSONArray snapshot = snapshotComponents(req.getShopName(), auth, specs);
+        row.setParentTitle(title);
+        row.setParentPrice(req.getParentPrice() != null ? req.getParentPrice() : row.getParentPrice());
+        row.setDiscountPercent(req.getDiscountPercent() != null ? req.getDiscountPercent() : row.getDiscountPercent());
+        row.setComponentsJson(snapshot.toJSONString());
+        row.setStatus(ShopBundleStatus.CREATING);
+        bundleRepository.updateAfterPoll(row);
+
+        try {
+            String keepParent = row.getParentProductId();
+            String keepVariant = row.getParentVariantId();
+            String operationId = bundleComponent.updateBundle(
+                    req.getShopName(), auth.getShopDomain(), auth.getAccessToken(),
+                    keepParent, title, specs);
+            row.setShopifyOperationId(operationId);
+            JSONObject op = pollUntilDone(req.getShopName(), auth, operationId);
+            applyOperationResult(row, op);
+            if (StringUtils.isBlank(row.getParentProductId())) {
+                row.setParentProductId(keepParent);
+            }
+            if (StringUtils.isBlank(row.getParentVariantId())) {
+                row.setParentVariantId(keepVariant);
+            }
+            if (row.getStatus() == ShopBundleStatus.FAILED
+                    && op != null
+                    && "COMPLETE".equalsIgnoreCase(op.getString("status"))) {
+                row.setStatus(ShopBundleStatus.ACTIVE);
+                row.setErrorMessage(null);
+                row.setSyncedAt(Instant.now());
+            }
+            afterActiveWrite(req.getShopName(), auth, row, row.getParentPrice(), row.getDiscountPercent());
+            bundleRepository.updateAfterPoll(row);
+            return toVo(row);
+        } catch (Exception e) {
+            log.error("Bundle update failed shop={} id={}", req.getShopName(), row.getId(), e);
+            bundleRepository.markFailed(row.getId(), e.getMessage());
+            throw e instanceof CustomException ce ? ce : new CustomException(e.getMessage());
+        }
+    }
+
+    public ShopBundleVO dissolve(String shopName, Long bundleId) {
+        if (bundleId == null || StringUtils.isBlank(shopName)) {
+            throw new CustomException("shopName and bundleId required");
+        }
+        ShopProductBundle row = bundleRepository.findById(bundleId)
+                .orElseThrow(() -> new CustomException("Bundle not found"));
+        if (!shopName.equals(row.getShopName())) {
+            throw new CustomException("Bundle shop mismatch");
+        }
+        if (row.getManagedByApp() != 1) {
+            throw new CustomException("Bundle is managed by another app");
+        }
+        ShopifyStoreAuth auth = requireAuth(shopName);
+        if (StringUtils.isNotBlank(row.getParentProductId())) {
+            try {
+                bundleComponent.deleteParentProduct(
+                        shopName, auth.getShopDomain(), auth.getAccessToken(), row.getParentProductId());
+            } catch (Exception e) {
+                log.warn("Bundle parent delete on Shopify failed shop={} id={}: {}",
+                        shopName, bundleId, e.getMessage());
+                // Still mark local DISSOLVED — parent may already be gone
+            }
+        }
+        bundleRepository.updateStatus(bundleId, ShopBundleStatus.DISSOLVED, "Dissolved from App");
+        row.setStatus(ShopBundleStatus.DISSOLVED);
+        row.setErrorMessage("Dissolved from App");
+        return toVo(row);
+    }
+
+    private void afterActiveWrite(String shopName, ShopifyStoreAuth auth, ShopProductBundle row,
+                                  BigDecimal parentPrice, BigDecimal discountPercent) {
+        if (row.getStatus() != ShopBundleStatus.ACTIVE) return;
+        if (parentPrice != null
+                && StringUtils.isNotBlank(row.getParentProductId())
+                && StringUtils.isNotBlank(row.getParentVariantId())) {
+            try {
+                bundleComponent.updateParentVariantPrice(
+                        shopName,
+                        auth.getShopDomain(),
+                        auth.getAccessToken(),
+                        row.getParentProductId(),
+                        row.getParentVariantId(),
+                        parentPrice);
+                row.setParentPrice(parentPrice);
+            } catch (Exception priceErr) {
+                log.warn("Bundle parent price update skipped shop={} id={}: {}",
+                        shopName, row.getId(), priceErr.getMessage());
+            }
+        }
+        if (StringUtils.isNotBlank(row.getParentProductId())) {
+            bundleComponent.setBundleDiscountMetafield(
+                    shopName, auth.getShopDomain(), auth.getAccessToken(),
+                    row.getParentProductId(), discountPercent);
+        }
+    }
+
+    private JSONArray snapshotComponents(String shopName, ShopifyStoreAuth auth,
+                                         List<ShopifyProductBundleComponent.ComponentSpec> specs) {
+        JSONArray snapshot = new JSONArray();
+        for (ShopifyProductBundleComponent.ComponentSpec spec : specs) {
+            JSONObject c = new JSONObject();
+            c.put("productId", numericId(spec.productId()));
+            c.put("quantity", spec.quantity());
+            if (StringUtils.isNotBlank(spec.variantId())) {
+                c.put("variantId", numericId(spec.variantId()));
+            }
+            try {
+                JSONObject p = bundleComponent.fetchProductOptions(
+                        shopName, auth.getShopDomain(), auth.getAccessToken(),
+                        ShopifyProductBundleComponent.toProductGid(spec.productId()));
+                if (p != null) c.put("title", p.getString("title"));
+            } catch (Exception ignored) {
+                /* title optional */
+            }
+            snapshot.add(c);
+        }
+        return snapshot;
+    }
+
+    private void assertAllComponentsBound(String shopName,
+                                           List<ShopifyProductBundleComponent.ComponentSpec> specs) {
+        List<String> missing = new ArrayList<>();
+        for (ShopifyProductBundleComponent.ComponentSpec spec : specs) {
+            if (!shopProductBindingRepository.hasActiveItemBinding(shopName, numericId(spec.productId()))) {
+                missing.add(numericId(spec.productId()));
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new CustomException(
+                    "All bundle components must have an ACTIVE source binding. Unbound: "
+                            + String.join(", ", missing));
         }
     }
 
@@ -285,26 +417,32 @@ public class ShopBundleService {
         row.setSyncedAt(Instant.now());
     }
 
-    private List<ShopifyProductBundleComponent.ComponentSpec> normalizeComponents(ShopBundleCreateReq req) {
-        Map<String, Integer> qtyById = new LinkedHashMap<>();
-        String contextId = numericId(req.getContextProductId());
-        qtyById.put(contextId, 1);
-        if (req.getComponents() != null) {
-            for (ShopBundleCreateReq.ComponentInput c : req.getComponents()) {
+    private List<ShopifyProductBundleComponent.ComponentSpec> normalizeComponents(
+            String contextProductId,
+            List<ShopBundleCreateReq.ComponentInput> components) {
+        Map<String, ShopifyProductBundleComponent.ComponentSpec> byId = new LinkedHashMap<>();
+        String contextId = numericId(contextProductId);
+        byId.put(contextId, new ShopifyProductBundleComponent.ComponentSpec(contextId, 1, null));
+        if (components != null) {
+            for (ShopBundleCreateReq.ComponentInput c : components) {
                 if (c == null || StringUtils.isBlank(c.getProductId())) continue;
                 String id = numericId(c.getProductId());
                 int q = c.getQuantity() == null ? 1 : Math.max(1, c.getQuantity());
-                qtyById.merge(id, q, Integer::sum);
+                String variantId = StringUtils.isBlank(c.getVariantId()) ? null : numericId(c.getVariantId());
+                ShopifyProductBundleComponent.ComponentSpec existing = byId.get(id);
+                if (existing == null) {
+                    byId.put(id, new ShopifyProductBundleComponent.ComponentSpec(id, q, variantId));
+                } else {
+                    byId.put(id, new ShopifyProductBundleComponent.ComponentSpec(
+                            id, existing.quantity() + q,
+                            variantId != null ? variantId : existing.variantId()));
+                }
             }
         }
-        if (qtyById.size() < 2) {
+        if (byId.size() < 2) {
             throw new CustomException("Select at least one additional product as a bundle component");
         }
-        List<ShopifyProductBundleComponent.ComponentSpec> specs = new ArrayList<>();
-        for (Map.Entry<String, Integer> e : qtyById.entrySet()) {
-            specs.add(new ShopifyProductBundleComponent.ComponentSpec(e.getKey(), e.getValue()));
-        }
-        return specs;
+        return new ArrayList<>(byId.values());
     }
 
     private ShopifyStoreAuth requireAuth(String shopName) {
@@ -347,6 +485,7 @@ public class ShopBundleService {
                 .setParentVariantId(numericId(row.getParentVariantId()))
                 .setParentTitle(row.getParentTitle())
                 .setParentPrice(row.getParentPrice())
+                .setDiscountPercent(row.getDiscountPercent())
                 .setStatus(row.getStatus().name())
                 .setManagedByApp(row.getManagedByApp() == 1)
                 .setErrorMessage(row.getErrorMessage())
@@ -365,7 +504,8 @@ public class ShopBundleService {
                 list.add(new ShopBundleVO.ComponentVO()
                         .setProductId(numericId(o.getString("productId")))
                         .setQuantity(o.getIntValue("quantity", 1))
-                        .setTitle(o.getString("title")));
+                        .setTitle(o.getString("title"))
+                        .setVariantId(numericId(o.getString("variantId"))));
             }
         } catch (Exception e) {
             /* ignore malformed */

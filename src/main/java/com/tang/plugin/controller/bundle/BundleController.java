@@ -5,6 +5,7 @@ import com.tang.plugin.domain.dto.bundle.BundlesFeatureVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleStatusMapVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleVO;
 import com.tang.plugin.domain.query.bundle.ShopBundleCreateReq;
+import com.tang.plugin.domain.query.bundle.ShopBundleUpdateReq;
 import com.tang.plugin.service.bundle.ShopBundleService;
 import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
@@ -59,5 +60,22 @@ public class BundleController {
         }
         shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
         return shopBundleService.createAndWait(body);
+    }
+
+    @PostMapping("/update")
+    public ShopBundleVO update(HttpServletRequest request, @RequestBody ShopBundleUpdateReq body) {
+        if (body == null || StringUtils.isBlank(body.getShopName())) {
+            throw new CustomException("shopName required");
+        }
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
+        return shopBundleService.updateAndWait(body);
+    }
+
+    @PostMapping("/{id}/dissolve")
+    public ShopBundleVO dissolve(HttpServletRequest request,
+                                 @PathVariable("id") Long id,
+                                 @RequestParam("shopName") String shopName) {
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
+        return shopBundleService.dissolve(shopName, id);
     }
 }

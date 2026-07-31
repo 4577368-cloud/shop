@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -44,6 +45,14 @@ public class ShopifyProductBundleComponent {
                   name
                   values
                 }
+                variants(first: 100) {
+                  nodes {
+                    id
+                    title
+                    price
+                    selectedOptions { name value }
+                  }
+                }
               }
             }
             """;
@@ -55,6 +64,27 @@ public class ShopifyProductBundleComponent {
                   id
                   status
                 }
+                userErrors { field message }
+              }
+            }
+            """;
+
+    private static final String PRODUCT_BUNDLE_UPDATE = """
+            mutation ProductBundleUpdate($input: ProductBundleUpdateInput!) {
+              productBundleUpdate(input: $input) {
+                productBundleOperation {
+                  id
+                  status
+                }
+                userErrors { field message }
+              }
+            }
+            """;
+
+    private static final String PRODUCT_DELETE = """
+            mutation BundleParentDelete($input: ProductDeleteInput!) {
+              productDelete(input: $input) {
+                deletedProductId
                 userErrors { field message }
               }
             }
@@ -79,9 +109,6 @@ public class ShopifyProductBundleComponent {
             }
             """;
 
-    @Resource
-    private ShopifyGraphqlClient shopifyGraphqlClient;
-
     private static final String PRODUCT_VARIANTS_BULK_UPDATE = """
             mutation BundleParentPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
               productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -89,6 +116,17 @@ public class ShopifyProductBundleComponent {
               }
             }
             """;
+
+    private static final String METAFIELDS_SET = """
+            mutation BundleDiscountMetafield($metafields: [MetafieldsSetInput!]!) {
+              metafieldsSet(metafields: $metafields) {
+                userErrors { field message }
+              }
+            }
+            """;
+
+    @Resource
+    private ShopifyGraphqlClient shopifyGraphqlClient;
 
     public BundlesFeatureVO fetchBundlesFeature(String shopName, String shopDomain, String accessToken) {
         JSONObject response = shopifyGraphqlClient.execute(
@@ -115,20 +153,7 @@ public class ShopifyProductBundleComponent {
         if (StringUtils.isBlank(title)) {
             throw new CustomException("Bundle title required");
         }
-        if (components == null || components.isEmpty()) {
-            throw new CustomException("Bundle requires at least one component");
-        }
-
-        JSONArray componentInputs = new JSONArray();
-        for (ComponentSpec spec : components) {
-            String gid = toProductGid(spec.productId());
-            JSONObject product = fetchProductOptions(shopName, shopDomain, accessToken, gid);
-            if (product == null) {
-                throw new CustomException("Component product not found: " + spec.productId());
-            }
-            componentInputs.add(buildComponentInput(product, Math.max(1, spec.quantity())));
-        }
-
+        JSONArray componentInputs = buildComponentInputs(shopName, shopDomain, accessToken, components);
         JSONObject input = new JSONObject();
         input.put("title", title);
         input.put("components", componentInputs);
@@ -150,8 +175,58 @@ public class ShopifyProductBundleComponent {
         return op.getString("id");
     }
 
+    public String updateBundle(String shopName, String shopDomain, String accessToken,
+                               String parentProductId, String title, List<ComponentSpec> components) {
+        if (StringUtils.isBlank(parentProductId)) {
+            throw new CustomException("parentProductId required for update");
+        }
+        JSONArray componentInputs = buildComponentInputs(shopName, shopDomain, accessToken, components);
+        JSONObject input = new JSONObject();
+        input.put("productId", toProductGid(parentProductId));
+        if (StringUtils.isNotBlank(title)) {
+            input.put("title", title);
+        }
+        input.put("components", componentInputs);
+        JSONObject variables = new JSONObject();
+        variables.put("input", input);
+
+        JSONObject response = shopifyGraphqlClient.execute(
+                shopName, shopDomain, accessToken, PRODUCT_BUNDLE_UPDATE, variables);
+        JSONObject data = response.getJSONObject("data");
+        JSONObject payload = data == null ? null : data.getJSONObject("productBundleUpdate");
+        if (payload == null) {
+            throw new CustomException("productBundleUpdate returned empty payload");
+        }
+        assertNoUserErrors(payload.getJSONArray("userErrors"), "productBundleUpdate");
+        JSONObject op = payload.getJSONObject("productBundleOperation");
+        if (op == null || StringUtils.isBlank(op.getString("id"))) {
+            throw new CustomException("productBundleUpdate missing operation id");
+        }
+        return op.getString("id");
+    }
+
+    /** Soft-dissolve: delete the Shopify parent product we created. */
+    public void deleteParentProduct(String shopName, String shopDomain, String accessToken,
+                                    String parentProductId) {
+        if (StringUtils.isBlank(parentProductId)) {
+            throw new CustomException("parentProductId required to dissolve");
+        }
+        JSONObject input = new JSONObject();
+        input.put("id", toProductGid(parentProductId));
+        JSONObject variables = new JSONObject();
+        variables.put("input", input);
+        JSONObject response = shopifyGraphqlClient.execute(
+                shopName, shopDomain, accessToken, PRODUCT_DELETE, variables);
+        JSONObject data = response.getJSONObject("data");
+        JSONObject payload = data == null ? null : data.getJSONObject("productDelete");
+        if (payload == null) {
+            throw new CustomException("productDelete returned empty payload");
+        }
+        assertNoUserErrors(payload.getJSONArray("userErrors"), "productDelete");
+    }
+
     public void updateParentVariantPrice(String shopName, String shopDomain, String accessToken,
-                                         String productGid, String variantGid, java.math.BigDecimal price) {
+                                         String productGid, String variantGid, BigDecimal price) {
         if (price == null || StringUtils.isAnyBlank(productGid, variantGid)) return;
         JSONObject variant = new JSONObject();
         variant.put("id", variantGid.startsWith("gid://") ? variantGid : "gid://shopify/ProductVariant/" + variantGid);
@@ -167,6 +242,34 @@ public class ShopifyProductBundleComponent {
         JSONObject payload = data == null ? null : data.getJSONObject("productVariantsBulkUpdate");
         if (payload != null) {
             assertNoUserErrors(payload.getJSONArray("userErrors"), "productVariantsBulkUpdate");
+        }
+    }
+
+    /** Writes discount % metafield for the Discount Function extension to read. */
+    public void setBundleDiscountMetafield(String shopName, String shopDomain, String accessToken,
+                                           String parentProductId, BigDecimal discountPercent) {
+        if (StringUtils.isBlank(parentProductId)) return;
+        JSONObject mf = new JSONObject();
+        mf.put("ownerId", toProductGid(parentProductId));
+        mf.put("namespace", "tangbuy_bundle");
+        mf.put("key", "discount_percent");
+        mf.put("type", "number_decimal");
+        mf.put("value", discountPercent == null ? "0" : discountPercent.toPlainString());
+        JSONArray list = new JSONArray();
+        list.add(mf);
+        JSONObject variables = new JSONObject();
+        variables.put("metafields", list);
+        try {
+            JSONObject response = shopifyGraphqlClient.execute(
+                    shopName, shopDomain, accessToken, METAFIELDS_SET, variables);
+            JSONObject data = response.getJSONObject("data");
+            JSONObject payload = data == null ? null : data.getJSONObject("metafieldsSet");
+            if (payload != null) {
+                assertNoUserErrors(payload.getJSONArray("userErrors"), "metafieldsSet");
+            }
+        } catch (Exception e) {
+            log.warn("Bundle discount metafield skipped shop={} product={}: {}",
+                    shopName, parentProductId, e.getMessage());
         }
     }
 
@@ -188,14 +291,54 @@ public class ShopifyProductBundleComponent {
         return data == null ? null : data.getJSONObject("productOperation");
     }
 
-    private static JSONObject buildComponentInput(JSONObject product, int quantity) {
+    private JSONArray buildComponentInputs(String shopName, String shopDomain, String accessToken,
+                                           List<ComponentSpec> components) {
+        if (components == null || components.isEmpty()) {
+            throw new CustomException("Bundle requires at least one component");
+        }
+        JSONArray componentInputs = new JSONArray();
+        for (ComponentSpec spec : components) {
+            String gid = toProductGid(spec.productId());
+            JSONObject product = fetchProductOptions(shopName, shopDomain, accessToken, gid);
+            if (product == null) {
+                throw new CustomException("Component product not found: " + spec.productId());
+            }
+            componentInputs.add(buildComponentInput(product, Math.max(1, spec.quantity()), spec.variantId()));
+        }
+        return componentInputs;
+    }
+
+    private static JSONObject buildComponentInput(JSONObject product, int quantity, String variantId) {
         JSONObject component = new JSONObject();
         component.put("quantity", quantity);
         component.put("productId", product.getString("id"));
 
         JSONArray options = product.getJSONArray("options");
         JSONArray optionSelections = new JSONArray();
-        if (options != null) {
+
+        JSONObject matchedVariant = findVariant(product, variantId);
+        if (matchedVariant != null) {
+            JSONArray selectedOptions = matchedVariant.getJSONArray("selectedOptions");
+            if (selectedOptions != null) {
+                for (int i = 0; i < selectedOptions.size(); i++) {
+                    JSONObject so = selectedOptions.getJSONObject(i);
+                    if (so == null) continue;
+                    String name = so.getString("name");
+                    String value = so.getString("value");
+                    String optionId = findOptionIdByName(options, name);
+                    if (StringUtils.isAnyBlank(optionId, name, value)) continue;
+                    JSONObject sel = new JSONObject();
+                    sel.put("componentOptionId", optionId);
+                    sel.put("name", name);
+                    JSONArray values = new JSONArray();
+                    values.add(value);
+                    sel.put("values", values);
+                    optionSelections.add(sel);
+                }
+            }
+        }
+
+        if (optionSelections.isEmpty() && options != null) {
             for (int i = 0; i < options.size(); i++) {
                 JSONObject opt = options.getJSONObject(i);
                 if (opt == null) continue;
@@ -225,6 +368,31 @@ public class ShopifyProductBundleComponent {
         return component;
     }
 
+    private static JSONObject findVariant(JSONObject product, String variantId) {
+        if (StringUtils.isBlank(variantId) || product == null) return null;
+        String want = numericProductId(variantId);
+        JSONObject variants = product.getJSONObject("variants");
+        JSONArray nodes = variants == null ? null : variants.getJSONArray("nodes");
+        if (nodes == null) return null;
+        for (int i = 0; i < nodes.size(); i++) {
+            JSONObject v = nodes.getJSONObject(i);
+            if (v == null) continue;
+            if (want.equals(numericProductId(v.getString("id")))) return v;
+        }
+        return null;
+    }
+
+    private static String findOptionIdByName(JSONArray options, String name) {
+        if (options == null || StringUtils.isBlank(name)) return null;
+        for (int i = 0; i < options.size(); i++) {
+            JSONObject opt = options.getJSONObject(i);
+            if (opt != null && name.equals(opt.getString("name"))) {
+                return opt.getString("id");
+            }
+        }
+        return null;
+    }
+
     private static void assertNoUserErrors(JSONArray errors, String op) {
         if (errors == null || errors.isEmpty()) return;
         StringBuilder sb = new StringBuilder();
@@ -251,5 +419,9 @@ public class ShopifyProductBundleComponent {
         return slash >= 0 ? gidOrId.substring(slash + 1) : gidOrId;
     }
 
-    public record ComponentSpec(String productId, int quantity) {}
+    public record ComponentSpec(String productId, int quantity, String variantId) {
+        public ComponentSpec(String productId, int quantity) {
+            this(productId, quantity, null);
+        }
+    }
 }

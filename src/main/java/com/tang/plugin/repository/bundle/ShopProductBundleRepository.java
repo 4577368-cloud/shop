@@ -24,7 +24,7 @@ public class ShopProductBundleRepository {
 
     private static final String COLUMNS = """
             id, shop_name, context_product_id, parent_product_id, parent_variant_id, parent_title,
-            parent_price, components_json, status, shopify_operation_id, managed_by_app,
+            parent_price, discount_percent, components_json, status, shopify_operation_id, managed_by_app,
             error_message, synced_at, del_flag, created_at, updated_at
             """;
 
@@ -36,6 +36,7 @@ public class ShopProductBundleRepository {
             .setParentVariantId(rs.getString("parent_variant_id"))
             .setParentTitle(rs.getString("parent_title"))
             .setParentPrice(rs.getBigDecimal("parent_price"))
+            .setDiscountPercent(rs.getBigDecimal("discount_percent"))
             .setComponentsJson(rs.getString("components_json"))
             .setStatus(ShopBundleStatus.valueOf(rs.getString("status")))
             .setShopifyOperationId(rs.getString("shopify_operation_id"))
@@ -70,6 +71,18 @@ public class ShopProductBundleRepository {
                 ROW_MAPPER, shopName);
     }
 
+    public Optional<ShopProductBundle> findActiveByParentVariant(String shopName, String parentVariantId) {
+        if (StringUtils.isAnyBlank(shopName, parentVariantId)) return Optional.empty();
+        String id = stripGid(parentVariantId);
+        List<ShopProductBundle> rows = jdbcTemplate.query(
+                "SELECT " + COLUMNS + " FROM shop_product_bundle "
+                        + "WHERE shop_name = ? AND del_flag = 0 AND status = 'ACTIVE' "
+                        + "AND (parent_variant_id = ? OR parent_variant_id = ?) "
+                        + "ORDER BY id DESC LIMIT 1",
+                ROW_MAPPER, shopName, id, "gid://shopify/ProductVariant/" + id);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
     public Optional<ShopProductBundle> findLatestByShopAndContext(String shopName, String contextProductId) {
         if (StringUtils.isAnyBlank(shopName, contextProductId)) return Optional.empty();
         List<ShopProductBundle> rows = jdbcTemplate.query(
@@ -87,9 +100,9 @@ public class ShopProductBundleRepository {
             PreparedStatement ps = con.prepareStatement(
                     "INSERT INTO shop_product_bundle ("
                             + "shop_name, context_product_id, parent_product_id, parent_variant_id, parent_title, "
-                            + "parent_price, components_json, status, shopify_operation_id, managed_by_app, "
+                            + "parent_price, discount_percent, components_json, status, shopify_operation_id, managed_by_app, "
                             + "error_message, synced_at, del_flag, created_at, updated_at"
-                            + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)",
+                            + ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)",
                     new String[]{"id"});
             int i = 1;
             ps.setString(i++, row.getShopName());
@@ -98,6 +111,7 @@ public class ShopProductBundleRepository {
             ps.setString(i++, row.getParentVariantId());
             ps.setString(i++, row.getParentTitle());
             ps.setBigDecimal(i++, row.getParentPrice());
+            ps.setBigDecimal(i++, row.getDiscountPercent());
             ps.setString(i++, row.getComponentsJson());
             ps.setString(i++, row.getStatus().name());
             ps.setString(i++, row.getShopifyOperationId());
@@ -115,12 +129,14 @@ public class ShopProductBundleRepository {
     public void updateAfterPoll(ShopProductBundle row) {
         jdbcTemplate.update(
                 "UPDATE shop_product_bundle SET parent_product_id=?, parent_variant_id=?, parent_title=?, "
-                        + "parent_price=?, status=?, shopify_operation_id=?, error_message=?, synced_at=?, "
-                        + "updated_at=? WHERE id=? AND del_flag=0",
+                        + "parent_price=?, discount_percent=?, components_json=?, status=?, shopify_operation_id=?, "
+                        + "error_message=?, synced_at=?, updated_at=? WHERE id=? AND del_flag=0",
                 row.getParentProductId(),
                 row.getParentVariantId(),
                 row.getParentTitle(),
                 row.getParentPrice(),
+                row.getDiscountPercent(),
+                row.getComponentsJson(),
                 row.getStatus().name(),
                 row.getShopifyOperationId(),
                 row.getErrorMessage(),
@@ -139,10 +155,6 @@ public class ShopProductBundleRepository {
                 id);
     }
 
-    /**
-     * Active (non-DISSOLVED) bundles for a shop where the product is parent, context, or a component.
-     * Filters in memory so components_json matching stays exact (no LIKE false positives).
-     */
     public List<ShopProductBundle> listByShopTouchingProduct(String shopName, String numericProductId) {
         if (StringUtils.isAnyBlank(shopName, numericProductId)) return Collections.emptyList();
         String id = numericProductId.trim();
@@ -170,17 +182,19 @@ public class ShopProductBundleRepository {
                 id);
     }
 
+    private static String stripGid(String gidOrId) {
+        if (StringUtils.isBlank(gidOrId)) return gidOrId;
+        int slash = gidOrId.lastIndexOf('/');
+        return slash >= 0 ? gidOrId.substring(slash + 1) : gidOrId.trim();
+    }
+
     private static boolean idEquals(String stored, String numericId) {
         if (StringUtils.isBlank(stored) || StringUtils.isBlank(numericId)) return false;
-        String s = stored.trim();
-        int slash = s.lastIndexOf('/');
-        if (slash >= 0) s = s.substring(slash + 1);
-        return numericId.equals(s);
+        return numericId.equals(stripGid(stored));
     }
 
     private static boolean componentsContain(String componentsJson, String numericId) {
         if (StringUtils.isBlank(componentsJson) || StringUtils.isBlank(numericId)) return false;
-        // Snapshot shape: [{"productId":"123","quantity":1}, ...]
         return componentsJson.contains("\"productId\":\"" + numericId + "\"")
                 || componentsJson.contains("\"productId\": \"" + numericId + "\"");
     }

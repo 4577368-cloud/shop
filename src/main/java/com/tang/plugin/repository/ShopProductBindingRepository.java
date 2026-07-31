@@ -68,6 +68,22 @@ public class ShopProductBindingRepository {
                 .filter(b -> b.getBindStatus() == BindingStatus.ACTIVE);
     }
 
+    /** True when the Shopify product (item) has at least one ACTIVE image/source binding. */
+    public boolean hasActiveItemBinding(String shopName, String thirdPlatformItemId) {
+        if (StringUtils.isAnyBlank(shopName, thirdPlatformItemId)) return false;
+        String id = thirdPlatformItemId.trim();
+        String gid = id.startsWith("gid://") ? id : "gid://shopify/Product/" + id;
+        Integer n = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(1) FROM shop_product_binding
+                WHERE shop_name = ? AND del_flag = 0 AND bind_status = ?
+                  AND (third_platform_item_id = ? OR third_platform_item_id = ?)
+                """,
+                Integer.class,
+                shopName, BindingStatus.ACTIVE.name(), id, gid);
+        return n != null && n > 0;
+    }
+
     /**
      * A live binding of a SKU regardless of confirmation: ACTIVE (confirmed) or PENDING (AI-suggested),
      * del_flag = 0. Used by UI-facing resolves (rebind detection, offer resolution) that must also see
