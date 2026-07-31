@@ -5,6 +5,7 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.bo.product.ShopifyProductMirror;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.enums.webhook.ShopifyWebhookEventEnum;
+import com.tang.plugin.service.bundle.ShopBundleService;
 import com.tang.plugin.service.product.ProductSyncService;
 import com.tang.plugin.service.publish.component.ExchangeRateComponent;
 import com.tang.plugin.service.publish.component.shopify.ShopifyProductComponent;
@@ -37,6 +38,8 @@ public class ShopifyProductUpsertedHandler implements ShopifyWebhookEventHandler
     private ExchangeRateComponent exchangeRateComponent;
     @Resource
     private ProductSyncService productSyncService;
+    @Resource
+    private ShopBundleService shopBundleService;
 
     @Override
     public boolean supports(ShopifyWebhookEventEnum eventType) {
@@ -78,5 +81,13 @@ public class ShopifyProductUpsertedHandler implements ShopifyWebhookEventHandler
                 shopDomain, auth.getShopName(), productGid,
                 mirror.getSkuList() == null ? 0 : mirror.getSkuList().size(),
                 webhookId);
+
+        // products/update only: Admin-side edits of parent/components → STALE
+        try {
+            shopBundleService.onShopifyProductUpserted(auth.getShopName(), productGid);
+        } catch (Exception e) {
+            log.warn("Bundle stale mark after product upsert failed shop={} productId={}: {}",
+                    auth.getShopName(), productGid, e.getMessage());
+        }
     }
 }

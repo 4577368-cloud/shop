@@ -23,9 +23,11 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -71,6 +73,77 @@ public class ShopBundleService {
             throw new CustomException("Bundle shop mismatch");
         }
         return toVo(row);
+    }
+
+    /**
+     * products/delete — parent gone → DISSOLVED; component/context gone → STALE.
+     * Only rows managed by this app. Errors are logged by callers; this method does not throw.
+     */
+    public void onShopifyProductDeleted(String shopName, String productGidOrId) {
+        String productId = numericId(productGidOrId);
+        if (StringUtils.isAnyBlank(shopName, productId)) return;
+        List<ShopProductBundle> rows = bundleRepository.listByShopTouchingProduct(shopName, productId);
+        for (ShopProductBundle row : rows) {
+            if (row.getManagedByApp() != 1) continue;
+            ShopBundleStatus status = row.getStatus();
+            if (status == null
+                    || status == ShopBundleStatus.DISSOLVED
+                    || (status != ShopBundleStatus.CREATING
+                    && status != ShopBundleStatus.ACTIVE
+                    && status != ShopBundleStatus.FAILED
+                    && status != ShopBundleStatus.STALE)) {
+                continue;
+            }
+            String parentId = numericId(row.getParentProductId());
+            if (productId.equals(parentId)) {
+                bundleRepository.updateStatus(
+                        row.getId(),
+                        ShopBundleStatus.DISSOLVED,
+                        "Parent product deleted on Shopify");
+                log.info("Bundle dissolved shop={} id={} parentDeleted={}",
+                        shopName, row.getId(), productId);
+                continue;
+            }
+            boolean asComponent = componentIds(row).contains(productId);
+            boolean asContext = productId.equals(numericId(row.getContextProductId()));
+            if (asComponent || asContext) {
+                String msg = asComponent
+                        ? "Component product deleted on Shopify; re-sync required"
+                        : "Context product deleted on Shopify; re-sync required";
+                bundleRepository.updateStatus(row.getId(), ShopBundleStatus.STALE, msg);
+                log.info("Bundle marked STALE shop={} id={} deletedProduct={}",
+                        shopName, row.getId(), productId);
+            }
+        }
+    }
+
+    /**
+     * products/update — ACTIVE managed bundles touching parent/component → STALE
+     * (Admin-side edits require merchant to re-check in App). Does not throw.
+     * Skips rows synced within the last few minutes to avoid echo from our own create/price writes.
+     */
+    public void onShopifyProductUpserted(String shopName, String productGidOrId) {
+        String productId = numericId(productGidOrId);
+        if (StringUtils.isAnyBlank(shopName, productId)) return;
+        Instant graceCutoff = Instant.now().minusSeconds(180);
+        List<ShopProductBundle> rows = bundleRepository.listByShopTouchingProduct(shopName, productId);
+        for (ShopProductBundle row : rows) {
+            if (row.getManagedByApp() != 1) continue;
+            if (row.getStatus() != ShopBundleStatus.ACTIVE) continue;
+            if (row.getSyncedAt() != null && row.getSyncedAt().isAfter(graceCutoff)) {
+                continue;
+            }
+            String parentId = numericId(row.getParentProductId());
+            boolean asParent = productId.equals(parentId);
+            boolean asComponent = componentIds(row).contains(productId);
+            if (!asParent && !asComponent) continue;
+            bundleRepository.updateStatus(
+                    row.getId(),
+                    ShopBundleStatus.STALE,
+                    "Parent or component changed on Shopify; re-sync required");
+            log.info("Bundle marked STALE after product update shop={} id={} product={}",
+                    shopName, row.getId(), productId);
+        }
     }
 
     public ShopBundleVO createAndWait(ShopBundleCreateReq req) {
@@ -298,6 +371,14 @@ public class ShopBundleService {
             /* ignore malformed */
         }
         return list;
+    }
+
+    private static Set<String> componentIds(ShopProductBundle row) {
+        Set<String> ids = new HashSet<>();
+        for (ShopBundleVO.ComponentVO c : parseComponents(row.getComponentsJson())) {
+            if (StringUtils.isNotBlank(c.getProductId())) ids.add(c.getProductId());
+        }
+        return ids;
     }
 
     private static String numericId(String gidOrId) {

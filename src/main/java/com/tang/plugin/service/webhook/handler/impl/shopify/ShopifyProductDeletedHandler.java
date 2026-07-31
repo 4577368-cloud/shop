@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.enums.webhook.ShopifyWebhookEventEnum;
+import com.tang.plugin.service.bundle.ShopBundleService;
 import com.tang.plugin.service.product.ProductMirrorDeleteService;
 import com.tang.plugin.service.user.ShopifyStoreAuthService;
 import com.tang.plugin.service.webhook.handler.ShopifyWebhookEventHandler;
@@ -23,6 +24,8 @@ public class ShopifyProductDeletedHandler implements ShopifyWebhookEventHandler 
     private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ProductMirrorDeleteService productMirrorDeleteService;
+    @Resource
+    private ShopBundleService shopBundleService;
 
     @Override
     public boolean supports(ShopifyWebhookEventEnum eventType) {
@@ -45,5 +48,12 @@ public class ShopifyProductDeletedHandler implements ShopifyWebhookEventHandler 
         boolean deleted = productMirrorDeleteService.softDeleteCascade(auth.getShopName(), productGid);
         log.info("Shopify products/delete processed shopDomain={} shopName={} productId={} deleted={} webhookId={}",
                 shopDomain, auth.getShopName(), productGid, deleted, webhookId);
+
+        try {
+            shopBundleService.onShopifyProductDeleted(auth.getShopName(), productGid);
+        } catch (Exception e) {
+            log.warn("Bundle stale mark after products/delete failed shop={} productId={}: {}",
+                    auth.getShopName(), productGid, e.getMessage());
+        }
     }
 }

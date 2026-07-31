@@ -14,6 +14,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -136,6 +137,52 @@ public class ShopProductBundleRepository {
                 StringUtils.left(error, 2000),
                 toTs(Instant.now()),
                 id);
+    }
+
+    /**
+     * Active (non-DISSOLVED) bundles for a shop where the product is parent, context, or a component.
+     * Filters in memory so components_json matching stays exact (no LIKE false positives).
+     */
+    public List<ShopProductBundle> listByShopTouchingProduct(String shopName, String numericProductId) {
+        if (StringUtils.isAnyBlank(shopName, numericProductId)) return Collections.emptyList();
+        String id = numericProductId.trim();
+        List<ShopProductBundle> out = new ArrayList<>();
+        for (ShopProductBundle row : listActiveByShop(shopName)) {
+            if (idEquals(row.getParentProductId(), id) || idEquals(row.getContextProductId(), id)) {
+                out.add(row);
+                continue;
+            }
+            if (componentsContain(row.getComponentsJson(), id)) {
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    public void updateStatus(Long id, ShopBundleStatus status, String errorMessage) {
+        if (id == null || status == null) return;
+        jdbcTemplate.update(
+                "UPDATE shop_product_bundle SET status=?, error_message=?, updated_at=? "
+                        + "WHERE id=? AND del_flag=0",
+                status.name(),
+                StringUtils.left(errorMessage, 2000),
+                toTs(Instant.now()),
+                id);
+    }
+
+    private static boolean idEquals(String stored, String numericId) {
+        if (StringUtils.isBlank(stored) || StringUtils.isBlank(numericId)) return false;
+        String s = stored.trim();
+        int slash = s.lastIndexOf('/');
+        if (slash >= 0) s = s.substring(slash + 1);
+        return numericId.equals(s);
+    }
+
+    private static boolean componentsContain(String componentsJson, String numericId) {
+        if (StringUtils.isBlank(componentsJson) || StringUtils.isBlank(numericId)) return false;
+        // Snapshot shape: [{"productId":"123","quantity":1}, ...]
+        return componentsJson.contains("\"productId\":\"" + numericId + "\"")
+                || componentsJson.contains("\"productId\": \"" + numericId + "\"");
     }
 
     private static Instant toInstant(Timestamp ts) {
