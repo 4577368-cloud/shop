@@ -1,8 +1,17 @@
 
-# Lightweight alignment: exclude Redis/Nacos auto-config unless k8s profile
+# Lightweight alignment: exclude Redis/Nacos auto-config unless k8s profile.
+# Nacos starters are on the classpath for k8s only; without this, Render/prod fails at boot with:
+# "No spring.config.import property has been defined" / nacos import-check.
+spring.cloud.nacos.config.import-check.enabled: false
 spring.autoconfigure.exclude: >
   org.redisson.spring.starter.RedissonAutoConfigurationV2,
-  org.redisson.spring.starter.RedissonAutoConfiguration
+  com.alibaba.cloud.nacos.NacosConfigAutoConfiguration,
+  com.alibaba.cloud.nacos.discovery.NacosDiscoveryAutoConfiguration,
+  com.alibaba.cloud.nacos.registry.NacosServiceRegistryAutoConfiguration,
+  com.alibaba.cloud.nacos.endpoint.NacosConfigEndpointAutoConfiguration,
+  com.alibaba.cloud.nacos.endpoint.NacosDiscoveryEndpointAutoConfiguration,
+  com.alibaba.cloud.nacos.discovery.NacosDiscoveryClientConfiguration,
+  com.alibaba.cloud.nacos.NacosServiceAutoConfiguration
 
 mybatis-plus:
   configuration:

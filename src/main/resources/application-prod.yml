@@ -1,6 +1,11 @@
 # Production / Render profile: activate with SPRING_PROFILES_ACTIVE=prod
 # Persistent PostgreSQL + internal token auth. Local (default) and test profiles are untouched.
 spring:
+  cloud:
+    nacos:
+      config:
+        import-check:
+          enabled: false
   datasource:
     # Prefer an explicit JDBC URL; otherwise build it from Render-provided DB parts.
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}
