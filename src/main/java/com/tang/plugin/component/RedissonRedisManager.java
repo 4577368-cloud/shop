@@ -11,7 +11,9 @@ import org.redisson.api.RateIntervalUnit;
 import org.redisson.api.RateType;
 import org.redisson.api.RedissonClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -24,9 +26,12 @@ import java.util.function.Supplier;
 
 /**
  * Redisson-backed RedisManager. Active when tang.plugin.redis.enabled=true.
+ * k8s-only: Render fat jar excludes Redisson (see Maven profile {@code render}).
  */
 @Slf4j
 @Service("redissonRedisManager")
+@Profile("k8s")
+@ConditionalOnClass(RedissonClient.class)
 @ConditionalOnProperty(name = "tang.plugin.redis.enabled", havingValue = "true")
 @ConditionalOnBean(RedissonClient.class)
 public class RedissonRedisManager implements RedisManager {

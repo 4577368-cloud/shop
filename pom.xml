@@ -247,4 +247,52 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+      Render / small-container packaging: drop k8s-only middleware jars from the fat jar.
+      rocketmq-rocksdb alone embeds ~50Mi of .so natives; nacos pulls grpc-netty-shaded.
+      Autoconfig is already excluded in application.yml; this also keeps them off the classpath
+      so ClassPath scanning / optional native loads cannot inflate RSS on Starter (~512Mi).
+      Full classpath (Nacos/Redisson/RocketMQ) remains the default for local + k8s builds.
+    -->
+    <profiles>
+        <profile>
+            <id>render</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-maven-plugin</artifactId>
+                        <configuration>
+                            <excludeGroupIds>
+                                org.apache.rocketmq,io.github.aliyunmq,com.alibaba.nacos,io.grpc,com.github.xiaoymin
+                            </excludeGroupIds>
+                            <excludes>
+                                <exclude>
+                                    <groupId>com.alibaba.cloud</groupId>
+                                    <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+                                </exclude>
+                                <exclude>
+                                    <groupId>com.alibaba.cloud</groupId>
+                                    <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+                                </exclude>
+                                <exclude>
+                                    <groupId>org.redisson</groupId>
+                                    <artifactId>redisson-spring-boot-starter</artifactId>
+                                </exclude>
+                                <exclude>
+                                    <groupId>org.redisson</groupId>
+                                    <artifactId>redisson</artifactId>
+                                </exclude>
+                                <exclude>
+                                    <groupId>org.redisson</groupId>
+                                    <artifactId>redisson-spring-data-32</artifactId>
+                                </exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

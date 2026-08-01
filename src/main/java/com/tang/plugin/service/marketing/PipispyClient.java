@@ -35,7 +35,7 @@ public class PipispyClient {
     private final PipispyProperties props;
     private final ObjectMapper objectMapper;
     /** Bounded executor for fan-out to prevent ForkJoinPool common-pool exhaustion. */
-    private final ExecutorService fanOutExecutor = Executors.newFixedThreadPool(16,
+    private final ExecutorService fanOutExecutor = Executors.newFixedThreadPool(4,
             r -> {
                 Thread t = new Thread(r, "pipispy-fanout-" + System.nanoTime());
                 t.setDaemon(true);

@@ -4,8 +4,11 @@ spring:
   cloud:
     nacos:
       config:
+        enabled: false
         import-check:
           enabled: false
+      discovery:
+        enabled: false
   datasource:
     # Prefer an explicit JDBC URL; otherwise build it from Render-provided DB parts.
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}
@@ -13,19 +16,56 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME}
     password: ${SPRING_DATASOURCE_PASSWORD}
     hikari:
-      maximum-pool-size: 5
+      maximum-pool-size: 3
       minimum-idle: 1
-  # Reuse the same portable schema.sql; DDL is CREATE ... IF NOT EXISTS (idempotent).
+  # Prod DB already has schema; skip parsing/running the large classpath schema.sql on every boot
+  # (CREATE IF NOT EXISTS is idempotent but still allocates during startup on a tight 512Mi).
+  # Apply new DDL via migration / one-off when deploying schema changes.
   sql:
     init:
-      mode: always
-      schema-locations: classpath:schema.sql
+      mode: never
   h2:
     console:
       enabled: false
+  autoconfigure:
+    exclude:
+      - org.redisson.spring.starter.RedissonAutoConfigurationV2
+      - com.alibaba.cloud.nacos.NacosConfigAutoConfiguration
+      - com.alibaba.cloud.nacos.discovery.NacosDiscoveryAutoConfiguration
+      - com.alibaba.cloud.nacos.registry.NacosServiceRegistryAutoConfiguration
+      - com.alibaba.cloud.nacos.endpoint.NacosConfigEndpointAutoConfiguration
+      - com.alibaba.cloud.nacos.endpoint.NacosDiscoveryEndpointAutoConfiguration
+      - com.alibaba.cloud.nacos.discovery.NacosDiscoveryClientConfiguration
+      - com.alibaba.cloud.nacos.NacosServiceAutoConfiguration
+
+# Knife4j / springdoc: disabled on Render (UI jar excluded from fat jar under -Prender).
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+knife4j:
+  enable: false
+
+server:
+  tomcat:
+    threads:
+      max: 50
+      min-spare: 2
+    accept-count: 50
+    max-http-form-post-size: 2MB
 
 tang:
   plugin:
+    redis:
+      enabled: false
+    mq:
+      enabled: false
+    shopify:
+      polling:
+        enabled: false
+      product:
+        polling-enabled: false
     security:
       internal-token:
         enabled: true
