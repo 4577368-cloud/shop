@@ -367,11 +367,62 @@ public class ShopifyProductBundleComponent {
                     attachParentImages(shopName, shopDomain, accessToken, parentProductId, imageUrls);
                 }
             }
+            writeCompositionMetafield(
+                    shopName, shopDomain, accessToken, parentProductId, lines);
             log.info("Bundle parent merchandise enriched shop={} parent={} images={}",
                     shopName, parentProductId, imageUrls.size());
         } catch (Exception e) {
             log.warn("Bundle parent merchandise enrich skipped shop={} parent={}: {}",
                     shopName, parentProductId, e.getMessage());
+        }
+    }
+
+    /** PDP / theme readable composition list on the kit parent. */
+    private void writeCompositionMetafield(String shopName, String shopDomain, String accessToken,
+                                           String parentProductId, List<ComponentLine> lines) {
+        if (StringUtils.isBlank(parentProductId)) return;
+        JSONArray arr = new JSONArray();
+        for (ComponentLine line : lines) {
+            JSONObject o = new JSONObject();
+            o.put("title", line.title());
+            o.put("quantity", line.quantity());
+            arr.add(o);
+        }
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                parentProductId, "tangbuy_bundle", "components_json", arr.toJSONString());
+    }
+
+    /** Same-product combo config on the original product (Track B — no new parent). */
+    public void writeComboConfigMetafield(String shopName, String shopDomain, String accessToken,
+                                          String productId, String configJson) {
+        if (StringUtils.isAnyBlank(productId, configJson)) return;
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                productId, "tangbuy_combo", "config", configJson);
+    }
+
+    private void setJsonMetafield(String shopName, String shopDomain, String accessToken,
+                                  String productId, String namespace, String key, String jsonValue) {
+        JSONObject mf = new JSONObject();
+        mf.put("ownerId", toProductGid(productId));
+        mf.put("namespace", namespace);
+        mf.put("key", key);
+        mf.put("type", "json");
+        mf.put("value", jsonValue);
+        JSONArray list = new JSONArray();
+        list.add(mf);
+        JSONObject variables = new JSONObject();
+        variables.put("metafields", list);
+        try {
+            JSONObject response = shopifyGraphqlClient.execute(
+                    shopName, shopDomain, accessToken, METAFIELDS_SET, variables);
+            JSONObject data = response.getJSONObject("data");
+            JSONObject payload = data == null ? null : data.getJSONObject("metafieldsSet");
+            if (payload != null) {
+                assertNoUserErrors(payload.getJSONArray("userErrors"), "metafieldsSet");
+            }
+        } catch (Exception e) {
+            log.warn("Bundle metafield {}.{} skipped shop={} product={}: {}",
+                    namespace, key, shopName, productId, e.getMessage());
         }
     }
 

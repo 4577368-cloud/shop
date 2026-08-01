@@ -6,6 +6,8 @@ import com.tang.plugin.domain.dto.bundle.ShopBundleStatusMapVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleVO;
 import com.tang.plugin.domain.query.bundle.ShopBundleCreateReq;
 import com.tang.plugin.domain.query.bundle.ShopBundleUpdateReq;
+import com.tang.plugin.domain.query.bundle.ShopComboSaveReq;
+import com.tang.plugin.domain.dto.bundle.ShopComboSaveVO;
 import com.tang.plugin.service.bundle.ShopBundleService;
 import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
@@ -77,5 +79,17 @@ public class BundleController {
                                  @RequestParam("shopName") String shopName) {
         shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), shopName);
         return shopBundleService.dissolve(shopName, id);
+    }
+
+    /**
+     * Track B — save same-product combo on the original product (no Fixed Bundle parent).
+     */
+    @PostMapping("/combo/save")
+    public ShopComboSaveVO saveCombo(HttpServletRequest request, @RequestBody ShopComboSaveReq body) {
+        if (body == null || StringUtils.isBlank(body.getShopName())) {
+            throw new CustomException("shopName required");
+        }
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
+        return shopBundleService.saveSameProductCombo(body);
     }
 }

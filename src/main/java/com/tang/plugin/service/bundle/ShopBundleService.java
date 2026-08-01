@@ -7,10 +7,12 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.bundle.BundlesFeatureVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleStatusMapVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleVO;
+import com.tang.plugin.domain.dto.bundle.ShopComboSaveVO;
 import com.tang.plugin.domain.entity.bundle.ShopProductBundle;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.domain.query.bundle.ShopBundleCreateReq;
 import com.tang.plugin.domain.query.bundle.ShopBundleUpdateReq;
+import com.tang.plugin.domain.query.bundle.ShopComboSaveReq;
 import com.tang.plugin.enums.bundle.ShopBundleStatus;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.bundle.ShopProductBundleRepository;
@@ -265,6 +267,67 @@ public class ShopBundleService {
             bundleRepository.markFailed(row.getId(), e.getMessage());
             throw e instanceof CustomException ce ? ce : new CustomException(e.getMessage());
         }
+    }
+
+    /**
+     * Track B — persist same-product combo on the original Shopify product.
+     * Does not create a Fixed Bundle parent. Checkout apply waits for Discount Function.
+     */
+    public ShopComboSaveVO saveSameProductCombo(ShopComboSaveReq req) {
+        if (req == null || StringUtils.isAnyBlank(req.getShopName(), req.getProductId(), req.getKind())) {
+            throw new CustomException("shopName, productId and kind required");
+        }
+        String kind = req.getKind().trim().toLowerCase();
+        if (!"qty_discount".equals(kind) && !"variant_pair".equals(kind)) {
+            throw new CustomException("kind must be qty_discount or variant_pair");
+        }
+        if (!shopProductBindingRepository.hasActiveItemBinding(
+                req.getShopName(), numericId(req.getProductId()))) {
+            throw new CustomException("Product must have an ACTIVE source binding before saving combo");
+        }
+
+        JSONObject config = new JSONObject();
+        config.put("kind", kind);
+        config.put("label", StringUtils.defaultIfBlank(req.getLabel(), ""));
+        if ("qty_discount".equals(kind)) {
+            int qty = req.getQty() == null ? 2 : Math.max(2, req.getQty());
+            BigDecimal pct = req.getDiscountPercent() == null
+                    ? BigDecimal.ZERO
+                    : req.getDiscountPercent().max(BigDecimal.ZERO).min(new BigDecimal("100"));
+            config.put("qty", qty);
+            config.put("discountPercent", pct);
+        } else {
+            if (req.getVariantIds() == null || req.getVariantIds().size() < 2) {
+                throw new CustomException("variant_pair requires at least two variantIds");
+            }
+            JSONArray vids = new JSONArray();
+            for (String id : req.getVariantIds()) {
+                if (StringUtils.isNotBlank(id)) vids.add(numericId(id));
+            }
+            if (vids.size() < 2) {
+                throw new CustomException("variant_pair requires at least two variantIds");
+            }
+            config.put("variantIds", vids);
+            if (req.getDiscountPercent() != null) {
+                config.put("discountPercent",
+                        req.getDiscountPercent().max(BigDecimal.ZERO).min(new BigDecimal("100")));
+            }
+        }
+
+        ShopifyStoreAuth auth = requireAuth(req.getShopName());
+        bundleComponent.writeComboConfigMetafield(
+                req.getShopName(),
+                auth.getShopDomain(),
+                auth.getAccessToken(),
+                req.getProductId(),
+                config.toJSONString());
+
+        return new ShopComboSaveVO()
+                .setProductId(numericId(req.getProductId()))
+                .setKind(kind)
+                .setSaved(true)
+                .setCheckoutPending(true)
+                .setMessage("Combo saved on product. Checkout discount applies after Function is deployed.");
     }
 
     public ShopBundleVO dissolve(String shopName, Long bundleId) {
