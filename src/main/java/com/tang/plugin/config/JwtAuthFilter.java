@@ -73,7 +73,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             "/api/plugin/sync/",
             "/api/plugin/sku-align/",
             "/api/plugin/ranking/",
-            "/api/plugin/procurement/"
+            "/api/plugin/procurement/",
+            "/api/plugin/bundle/"
     };
 
     /**
