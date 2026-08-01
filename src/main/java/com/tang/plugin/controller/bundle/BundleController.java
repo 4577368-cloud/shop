@@ -4,10 +4,12 @@ import com.tang.common.core.exception.CustomException;
 import com.tang.plugin.domain.dto.bundle.BundlesFeatureVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleStatusMapVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleVO;
+import com.tang.plugin.domain.dto.bundle.ShopComboSaveVO;
+import com.tang.plugin.domain.dto.bundle.ShopGiftSaveVO;
 import com.tang.plugin.domain.query.bundle.ShopBundleCreateReq;
 import com.tang.plugin.domain.query.bundle.ShopBundleUpdateReq;
 import com.tang.plugin.domain.query.bundle.ShopComboSaveReq;
-import com.tang.plugin.domain.dto.bundle.ShopComboSaveVO;
+import com.tang.plugin.domain.query.bundle.ShopGiftSaveReq;
 import com.tang.plugin.service.bundle.ShopBundleService;
 import com.tang.plugin.service.user.ShopAccessGuard;
 import jakarta.annotation.Resource;
@@ -91,5 +93,17 @@ public class BundleController {
         }
         shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
         return shopBundleService.saveSameProductCombo(body);
+    }
+
+    /**
+     * Gift rule — separate from kit composer. Writes tangbuy_gift.rule on the trigger product.
+     */
+    @PostMapping("/gift/save")
+    public ShopGiftSaveVO saveGift(HttpServletRequest request, @RequestBody ShopGiftSaveReq body) {
+        if (body == null || StringUtils.isBlank(body.getShopName())) {
+            throw new CustomException("shopName required");
+        }
+        shopAccessGuard.assertOwner((Long) request.getAttribute("userId"), body.getShopName());
+        return shopBundleService.saveGiftRule(body);
     }
 }

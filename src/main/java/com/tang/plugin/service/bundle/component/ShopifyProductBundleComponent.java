@@ -41,6 +41,7 @@ public class ShopifyProductBundleComponent {
                 id
                 title
                 descriptionHtml
+                tags
                 featuredImage { url altText }
                 media(first: 8) {
                   nodes {
@@ -69,11 +70,13 @@ public class ShopifyProductBundleComponent {
     private static final String PRODUCT_UPDATE_FIELDS = """
             mutation BundleParentFields($product: ProductUpdateInput!) {
               productUpdate(product: $product) {
-                product { id title status }
+                product { id title status tags }
                 userErrors { field message }
               }
             }
             """;
+
+    public static final String KIT_TAG = "tangbuy-kit";
 
     private static final String PRODUCT_CREATE_MEDIA = """
             mutation BundleParentMedia($productId: ID!, $media: [CreateMediaInput!]!) {
@@ -341,6 +344,8 @@ public class ShopifyProductBundleComponent {
             }
 
             String descriptionHtml = buildBundleDescriptionHtml(context, lines);
+            JSONObject parentNow = fetchProductOptions(
+                    shopName, shopDomain, accessToken, toProductGid(parentProductId));
             JSONObject product = new JSONObject();
             product.put("id", toProductGid(parentProductId));
             if (StringUtils.isNotBlank(parentTitle)) {
@@ -350,6 +355,7 @@ public class ShopifyProductBundleComponent {
                 product.put("descriptionHtml", descriptionHtml);
             }
             product.put("status", "ACTIVE");
+            product.put("tags", mergeKitTag(parentNow == null ? null : parentNow.get("tags")));
             JSONObject variables = new JSONObject();
             variables.put("product", product);
             JSONObject response = shopifyGraphqlClient.execute(
@@ -361,18 +367,49 @@ public class ShopifyProductBundleComponent {
             }
 
             if (!imageUrls.isEmpty()) {
-                JSONObject parentNow = fetchProductOptions(
-                        shopName, shopDomain, accessToken, toProductGid(parentProductId));
                 if (collectImageUrls(parentNow).isEmpty()) {
                     attachParentImages(shopName, shopDomain, accessToken, parentProductId, imageUrls);
                 }
             }
             writeCompositionMetafield(
                     shopName, shopDomain, accessToken, parentProductId, lines);
-            log.info("Bundle parent merchandise enriched shop={} parent={} images={}",
+            setBooleanMetafield(shopName, shopDomain, accessToken,
+                    parentProductId, "tangbuy_bundle", "is_kit", true);
+            log.info("Bundle parent merchandise enriched shop={} parent={} images={} kitTag=1",
                     shopName, parentProductId, imageUrls.size());
         } catch (Exception e) {
             log.warn("Bundle parent merchandise enrich skipped shop={} parent={}: {}",
+                    shopName, parentProductId, e.getMessage());
+        }
+    }
+
+    /**
+     * Best-effort: remove kit tag + is_kit before parent delete on dissolve.
+     * Safe if product already gone.
+     */
+    public void clearKitMarkers(String shopName, String shopDomain, String accessToken,
+                                String parentProductId) {
+        if (StringUtils.isBlank(parentProductId)) return;
+        try {
+            JSONObject parent = fetchProductOptions(
+                    shopName, shopDomain, accessToken, toProductGid(parentProductId));
+            if (parent == null) return;
+            JSONObject product = new JSONObject();
+            product.put("id", toProductGid(parentProductId));
+            product.put("tags", removeKitTag(parent.get("tags")));
+            JSONObject variables = new JSONObject();
+            variables.put("product", product);
+            JSONObject response = shopifyGraphqlClient.execute(
+                    shopName, shopDomain, accessToken, PRODUCT_UPDATE_FIELDS, variables);
+            JSONObject data = response.getJSONObject("data");
+            JSONObject payload = data == null ? null : data.getJSONObject("productUpdate");
+            if (payload != null) {
+                assertNoUserErrors(payload.getJSONArray("userErrors"), "productUpdate");
+            }
+            setBooleanMetafield(shopName, shopDomain, accessToken,
+                    parentProductId, "tangbuy_bundle", "is_kit", false);
+        } catch (Exception e) {
+            log.warn("Bundle clearKitMarkers skipped shop={} parent={}: {}",
                     shopName, parentProductId, e.getMessage());
         }
     }
@@ -400,14 +437,61 @@ public class ShopifyProductBundleComponent {
                 productId, "tangbuy_combo", "config", configJson);
     }
 
+    /** Gift rule on trigger product (Track gift — separate entry). */
+    public void writeGiftRuleMetafield(String shopName, String shopDomain, String accessToken,
+                                       String productId, String ruleJson) {
+        if (StringUtils.isAnyBlank(productId, ruleJson)) return;
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                productId, "tangbuy_gift", "rule", ruleJson);
+    }
+
+    private static String mergeKitTag(Object tagsRaw) {
+        java.util.LinkedHashSet<String> tags = parseTags(tagsRaw);
+        tags.add(KIT_TAG);
+        return String.join(", ", tags);
+    }
+
+    private static String removeKitTag(Object tagsRaw) {
+        java.util.LinkedHashSet<String> tags = parseTags(tagsRaw);
+        tags.remove(KIT_TAG);
+        return String.join(", ", tags);
+    }
+
+    private static java.util.LinkedHashSet<String> parseTags(Object tagsRaw) {
+        java.util.LinkedHashSet<String> tags = new java.util.LinkedHashSet<>();
+        if (tagsRaw instanceof JSONArray arr) {
+            for (int i = 0; i < arr.size(); i++) {
+                String t = arr.getString(i);
+                if (StringUtils.isNotBlank(t)) tags.add(t.trim());
+            }
+        } else if (tagsRaw instanceof String s && StringUtils.isNotBlank(s)) {
+            for (String part : s.split(",")) {
+                if (StringUtils.isNotBlank(part)) tags.add(part.trim());
+            }
+        }
+        return tags;
+    }
+
     private void setJsonMetafield(String shopName, String shopDomain, String accessToken,
                                   String productId, String namespace, String key, String jsonValue) {
+        setTypedMetafield(shopName, shopDomain, accessToken, productId, namespace, key, "json", jsonValue);
+    }
+
+    private void setBooleanMetafield(String shopName, String shopDomain, String accessToken,
+                                     String productId, String namespace, String key, boolean value) {
+        setTypedMetafield(shopName, shopDomain, accessToken, productId, namespace, key,
+                "boolean", value ? "true" : "false");
+    }
+
+    private void setTypedMetafield(String shopName, String shopDomain, String accessToken,
+                                   String productId, String namespace, String key,
+                                   String type, String value) {
         JSONObject mf = new JSONObject();
         mf.put("ownerId", toProductGid(productId));
         mf.put("namespace", namespace);
         mf.put("key", key);
-        mf.put("type", "json");
-        mf.put("value", jsonValue);
+        mf.put("type", type);
+        mf.put("value", value);
         JSONArray list = new JSONArray();
         list.add(mf);
         JSONObject variables = new JSONObject();

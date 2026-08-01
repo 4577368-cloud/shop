@@ -8,11 +8,13 @@ import com.tang.plugin.domain.dto.bundle.BundlesFeatureVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleStatusMapVO;
 import com.tang.plugin.domain.dto.bundle.ShopBundleVO;
 import com.tang.plugin.domain.dto.bundle.ShopComboSaveVO;
+import com.tang.plugin.domain.dto.bundle.ShopGiftSaveVO;
 import com.tang.plugin.domain.entity.bundle.ShopProductBundle;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.domain.query.bundle.ShopBundleCreateReq;
 import com.tang.plugin.domain.query.bundle.ShopBundleUpdateReq;
 import com.tang.plugin.domain.query.bundle.ShopComboSaveReq;
+import com.tang.plugin.domain.query.bundle.ShopGiftSaveReq;
 import com.tang.plugin.enums.bundle.ShopBundleStatus;
 import com.tang.plugin.repository.ShopProductBindingRepository;
 import com.tang.plugin.repository.bundle.ShopProductBundleRepository;
@@ -330,6 +332,57 @@ public class ShopBundleService {
                 .setMessage("Combo saved on product. Checkout discount applies after Function is deployed.");
     }
 
+    /**
+     * Gift rule on trigger product (separate entry from kit composer).
+     * Phase 1: persist metafield only; free gift at checkout is Function Phase 2.
+     */
+    public ShopGiftSaveVO saveGiftRule(ShopGiftSaveReq req) {
+        if (req == null || StringUtils.isAnyBlank(req.getShopName(), req.getProductId(), req.getGiftProductId())) {
+            throw new CustomException("shopName, productId and giftProductId required");
+        }
+        String kind = StringUtils.defaultIfBlank(req.getKind(), "qty_gift").trim().toLowerCase();
+        if (!"qty_gift".equals(kind)) {
+            throw new CustomException("kind must be qty_gift");
+        }
+        if (!shopProductBindingRepository.hasActiveItemBinding(
+                req.getShopName(), numericId(req.getProductId()))) {
+            throw new CustomException("Trigger product must have an ACTIVE source binding");
+        }
+        if (!shopProductBindingRepository.hasActiveItemBinding(
+                req.getShopName(), numericId(req.getGiftProductId()))) {
+            throw new CustomException("Gift product must have an ACTIVE source binding");
+        }
+        if (StringUtils.isBlank(req.getGiftVariantId())) {
+            throw new CustomException("giftVariantId required");
+        }
+        int minQty = req.getMinQty() == null ? 1 : Math.max(1, req.getMinQty());
+        int giftQty = req.getGiftQty() == null ? 1 : Math.max(1, req.getGiftQty());
+
+        JSONObject rule = new JSONObject();
+        rule.put("kind", kind);
+        rule.put("triggerProductId", numericId(req.getProductId()));
+        rule.put("minQty", minQty);
+        rule.put("giftProductId", numericId(req.getGiftProductId()));
+        rule.put("giftVariantId", numericId(req.getGiftVariantId()));
+        rule.put("giftQty", giftQty);
+        rule.put("label", StringUtils.defaultIfBlank(req.getLabel(), ""));
+
+        ShopifyStoreAuth auth = requireAuth(req.getShopName());
+        bundleComponent.writeGiftRuleMetafield(
+                req.getShopName(),
+                auth.getShopDomain(),
+                auth.getAccessToken(),
+                req.getProductId(),
+                rule.toJSONString());
+
+        return new ShopGiftSaveVO()
+                .setProductId(numericId(req.getProductId()))
+                .setKind(kind)
+                .setSaved(true)
+                .setCheckoutPending(true)
+                .setMessage("Gift rule saved. Auto free-gift at checkout is pending Function iteration.");
+    }
+
     public ShopBundleVO dissolve(String shopName, Long bundleId) {
         if (bundleId == null || StringUtils.isBlank(shopName)) {
             throw new CustomException("shopName and bundleId required");
@@ -344,6 +397,12 @@ public class ShopBundleService {
         }
         ShopifyStoreAuth auth = requireAuth(shopName);
         if (StringUtils.isNotBlank(row.getParentProductId())) {
+            try {
+                bundleComponent.clearKitMarkers(
+                        shopName, auth.getShopDomain(), auth.getAccessToken(), row.getParentProductId());
+            } catch (Exception ignored) {
+                /* best-effort before delete */
+            }
             try {
                 bundleComponent.deleteParentProduct(
                         shopName, auth.getShopDomain(), auth.getAccessToken(), row.getParentProductId());
