@@ -40,6 +40,15 @@ public class ShopifyProductBundleComponent {
               product(id: $id) {
                 id
                 title
+                descriptionHtml
+                featuredImage { url altText }
+                media(first: 8) {
+                  nodes {
+                    ... on MediaImage {
+                      image { url altText }
+                    }
+                  }
+                }
                 options {
                   id
                   name
@@ -53,6 +62,25 @@ public class ShopifyProductBundleComponent {
                     selectedOptions { name value }
                   }
                 }
+              }
+            }
+            """;
+
+    private static final String PRODUCT_UPDATE_FIELDS = """
+            mutation BundleParentFields($product: ProductUpdateInput!) {
+              productUpdate(product: $product) {
+                product { id title status }
+                userErrors { field message }
+              }
+            }
+            """;
+
+    private static final String PRODUCT_CREATE_MEDIA = """
+            mutation BundleParentMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+              productCreateMedia(productId: $productId, media: $media) {
+                media { id status }
+                mediaUserErrors { field message code }
+                userErrors { field message }
               }
             }
             """;
@@ -272,6 +300,169 @@ public class ShopifyProductBundleComponent {
                     shopName, parentProductId, e.getMessage());
         }
     }
+
+    /**
+     * After bundle parent exists: copy merchandising from context (+ component list),
+     * set status ACTIVE, attach gallery images. Best-effort — does not fail the create.
+     */
+    public void enrichParentMerchandise(String shopName, String shopDomain, String accessToken,
+                                        String parentProductId,
+                                        String contextProductId,
+                                        String parentTitle,
+                                        List<ComponentSpec> components) {
+        if (StringUtils.isAnyBlank(shopName, shopDomain, accessToken, parentProductId)) return;
+        try {
+            JSONObject context = null;
+            if (StringUtils.isNotBlank(contextProductId)) {
+                context = fetchProductOptions(
+                        shopName, shopDomain, accessToken, toProductGid(contextProductId));
+            }
+            List<String> imageUrls = collectImageUrls(context);
+            List<ComponentLine> lines = new ArrayList<>();
+            if (components != null) {
+                for (ComponentSpec spec : components) {
+                    if (spec == null || StringUtils.isBlank(spec.productId())) continue;
+                    String title = null;
+                    JSONObject p = null;
+                    try {
+                        p = fetchProductOptions(
+                                shopName, shopDomain, accessToken, toProductGid(spec.productId()));
+                        if (p != null) title = p.getString("title");
+                    } catch (Exception ignored) {
+                        /* title optional */
+                    }
+                    lines.add(new ComponentLine(
+                            StringUtils.defaultIfBlank(title, "Product " + numericProductId(spec.productId())),
+                            Math.max(1, spec.quantity())));
+                    if (imageUrls.isEmpty() && p != null) {
+                        imageUrls = collectImageUrls(p);
+                    }
+                }
+            }
+
+            String descriptionHtml = buildBundleDescriptionHtml(context, lines);
+            JSONObject product = new JSONObject();
+            product.put("id", toProductGid(parentProductId));
+            if (StringUtils.isNotBlank(parentTitle)) {
+                product.put("title", parentTitle.trim());
+            }
+            if (StringUtils.isNotBlank(descriptionHtml)) {
+                product.put("descriptionHtml", descriptionHtml);
+            }
+            product.put("status", "ACTIVE");
+            JSONObject variables = new JSONObject();
+            variables.put("product", product);
+            JSONObject response = shopifyGraphqlClient.execute(
+                    shopName, shopDomain, accessToken, PRODUCT_UPDATE_FIELDS, variables);
+            JSONObject data = response.getJSONObject("data");
+            JSONObject payload = data == null ? null : data.getJSONObject("productUpdate");
+            if (payload != null) {
+                assertNoUserErrors(payload.getJSONArray("userErrors"), "productUpdate");
+            }
+
+            if (!imageUrls.isEmpty()) {
+                JSONObject parentNow = fetchProductOptions(
+                        shopName, shopDomain, accessToken, toProductGid(parentProductId));
+                if (collectImageUrls(parentNow).isEmpty()) {
+                    attachParentImages(shopName, shopDomain, accessToken, parentProductId, imageUrls);
+                }
+            }
+            log.info("Bundle parent merchandise enriched shop={} parent={} images={}",
+                    shopName, parentProductId, imageUrls.size());
+        } catch (Exception e) {
+            log.warn("Bundle parent merchandise enrich skipped shop={} parent={}: {}",
+                    shopName, parentProductId, e.getMessage());
+        }
+    }
+
+    private void attachParentImages(String shopName, String shopDomain, String accessToken,
+                                    String parentProductId, List<String> imageUrls) {
+        JSONArray media = new JSONArray();
+        int n = 0;
+        for (String url : imageUrls) {
+            if (StringUtils.isBlank(url)) continue;
+            JSONObject m = new JSONObject();
+            m.put("originalSource", url.trim());
+            m.put("mediaContentType", "IMAGE");
+            m.put("alt", "Bundle");
+            media.add(m);
+            if (++n >= 6) break;
+        }
+        if (media.isEmpty()) return;
+        JSONObject variables = new JSONObject();
+        variables.put("productId", toProductGid(parentProductId));
+        variables.put("media", media);
+        JSONObject response = shopifyGraphqlClient.execute(
+                shopName, shopDomain, accessToken, PRODUCT_CREATE_MEDIA, variables);
+        JSONObject data = response.getJSONObject("data");
+        JSONObject payload = data == null ? null : data.getJSONObject("productCreateMedia");
+        if (payload == null) return;
+        JSONArray mediaErrs = payload.getJSONArray("mediaUserErrors");
+        if (mediaErrs != null && !mediaErrs.isEmpty()) {
+            log.warn("Bundle parent mediaUserErrors shop={} parent={} errs={}",
+                    shopName, parentProductId, mediaErrs.toJSONString());
+        }
+        JSONArray userErrs = payload.getJSONArray("userErrors");
+        if (userErrs != null && !userErrs.isEmpty()) {
+            log.warn("Bundle parent media userErrors shop={} parent={} errs={}",
+                    shopName, parentProductId, userErrs.toJSONString());
+        }
+    }
+
+    private static List<String> collectImageUrls(JSONObject product) {
+        List<String> urls = new ArrayList<>();
+        if (product == null) return urls;
+        JSONObject featured = product.getJSONObject("featuredImage");
+        if (featured != null && StringUtils.isNotBlank(featured.getString("url"))) {
+            urls.add(featured.getString("url").trim());
+        }
+        JSONObject media = product.getJSONObject("media");
+        JSONArray nodes = media == null ? null : media.getJSONArray("nodes");
+        if (nodes != null) {
+            for (int i = 0; i < nodes.size(); i++) {
+                JSONObject node = nodes.getJSONObject(i);
+                if (node == null) continue;
+                JSONObject image = node.getJSONObject("image");
+                if (image == null || StringUtils.isBlank(image.getString("url"))) continue;
+                String url = image.getString("url").trim();
+                if (!urls.contains(url)) urls.add(url);
+            }
+        }
+        return urls;
+    }
+
+    private static String buildBundleDescriptionHtml(JSONObject context, List<ComponentLine> lines) {
+        StringBuilder html = new StringBuilder();
+        html.append("<div class=\"tangbuy-fixed-bundle\">");
+        html.append("<p><strong>Bundle includes</strong></p><ul>");
+        for (ComponentLine line : lines) {
+            html.append("<li>")
+                    .append(escapeHtml(line.title()))
+                    .append(" ×")
+                    .append(line.quantity())
+                    .append("</li>");
+        }
+        html.append("</ul>");
+        String contextDesc = context == null ? null : context.getString("descriptionHtml");
+        if (StringUtils.isNotBlank(contextDesc)) {
+            html.append("<div class=\"tangbuy-bundle-base-desc\">")
+                    .append(contextDesc)
+                    .append("</div>");
+        }
+        html.append("</div>");
+        return html.toString();
+    }
+
+    private static String escapeHtml(String raw) {
+        if (raw == null) return "";
+        return raw
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+    }
+
+    private record ComponentLine(String title, int quantity) {}
 
     public JSONObject fetchProductOptions(String shopName, String shopDomain, String accessToken, String productGid) {
         JSONObject variables = new JSONObject();

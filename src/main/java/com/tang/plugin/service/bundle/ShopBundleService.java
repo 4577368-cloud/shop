@@ -339,7 +339,29 @@ public class ShopBundleService {
             bundleComponent.setBundleDiscountMetafield(
                     shopName, auth.getShopDomain(), auth.getAccessToken(),
                     row.getParentProductId(), discountPercent);
+            List<ShopifyProductBundleComponent.ComponentSpec> specs = specsFromSnapshot(row);
+            bundleComponent.enrichParentMerchandise(
+                    shopName,
+                    auth.getShopDomain(),
+                    auth.getAccessToken(),
+                    row.getParentProductId(),
+                    row.getContextProductId(),
+                    row.getParentTitle(),
+                    specs);
         }
+    }
+
+    private static List<ShopifyProductBundleComponent.ComponentSpec> specsFromSnapshot(
+            ShopProductBundle row) {
+        List<ShopifyProductBundleComponent.ComponentSpec> specs = new ArrayList<>();
+        for (ShopBundleVO.ComponentVO c : parseComponents(row.getComponentsJson())) {
+            if (c == null || StringUtils.isBlank(c.getProductId())) continue;
+            specs.add(new ShopifyProductBundleComponent.ComponentSpec(
+                    c.getProductId(),
+                    Math.max(1, c.getQuantity()),
+                    c.getVariantId()));
+        }
+        return specs;
     }
 
     private JSONArray snapshotComponents(String shopName, ShopifyStoreAuth auth,
