@@ -164,7 +164,7 @@ public class ShopBundleService {
         }
 
         List<ShopifyProductBundleComponent.ComponentSpec> specs = normalizeComponents(
-                req.getContextProductId(), req.getComponents());
+                req.getContextProductId(), req.getContextVariantId(), req.getComponents());
         assertAllComponentsBound(req.getShopName(), specs);
 
         String title = StringUtils.trimToEmpty(req.getTitle());
@@ -217,9 +217,13 @@ public class ShopBundleService {
         if (StringUtils.isBlank(row.getParentProductId())) {
             throw new CustomException("Bundle has no Shopify parent yet — create first");
         }
+        if (row.getStatus() == ShopBundleStatus.FAILED) {
+            throw new CustomException(
+                    "Failed bundle cannot be updated — create a new bundle instead");
+        }
         ShopifyStoreAuth auth = requireAuth(req.getShopName());
         List<ShopifyProductBundleComponent.ComponentSpec> specs = normalizeComponents(
-                row.getContextProductId(), req.getComponents());
+                row.getContextProductId(), req.getContextVariantId(), req.getComponents());
         assertAllComponentsBound(req.getShopName(), specs);
 
         String title = StringUtils.defaultIfBlank(StringUtils.trimToEmpty(req.getTitle()), row.getParentTitle());
@@ -281,15 +285,34 @@ public class ShopBundleService {
                 bundleComponent.deleteParentProduct(
                         shopName, auth.getShopDomain(), auth.getAccessToken(), row.getParentProductId());
             } catch (Exception e) {
-                log.warn("Bundle parent delete on Shopify failed shop={} id={}: {}",
-                        shopName, bundleId, e.getMessage());
-                // Still mark local DISSOLVED — parent may already be gone
+                if (isShopifyProductAlreadyGone(e)) {
+                    log.info("Bundle parent already gone on Shopify shop={} id={} parent={}",
+                            shopName, bundleId, row.getParentProductId());
+                } else {
+                    log.warn("Bundle parent delete on Shopify failed shop={} id={}: {}",
+                            shopName, bundleId, e.getMessage());
+                    throw e instanceof CustomException ce
+                            ? ce
+                            : new CustomException(
+                                    "Failed to delete Shopify parent product; dissolve aborted: "
+                                            + e.getMessage());
+                }
             }
         }
         bundleRepository.updateStatus(bundleId, ShopBundleStatus.DISSOLVED, "Dissolved from App");
         row.setStatus(ShopBundleStatus.DISSOLVED);
         row.setErrorMessage("Dissolved from App");
         return toVo(row);
+    }
+
+    /** True when Shopify delete failed because the parent is already missing. */
+    private static boolean isShopifyProductAlreadyGone(Exception e) {
+        String msg = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+        return msg.contains("not found")
+                || msg.contains("does not exist")
+                || msg.contains("could not find")
+                || msg.contains("no product")
+                || msg.contains("product does not exist");
     }
 
     private void afterActiveWrite(String shopName, ShopifyStoreAuth auth, ShopProductBundle row,
@@ -419,16 +442,29 @@ public class ShopBundleService {
 
     private List<ShopifyProductBundleComponent.ComponentSpec> normalizeComponents(
             String contextProductId,
+            String contextVariantId,
             List<ShopBundleCreateReq.ComponentInput> components) {
         Map<String, ShopifyProductBundleComponent.ComponentSpec> byId = new LinkedHashMap<>();
         String contextId = numericId(contextProductId);
-        byId.put(contextId, new ShopifyProductBundleComponent.ComponentSpec(contextId, 1, null));
+        String contextVariant = StringUtils.isBlank(contextVariantId)
+                ? null
+                : numericId(contextVariantId);
+        byId.put(contextId, new ShopifyProductBundleComponent.ComponentSpec(
+                contextId, 1, contextVariant));
         if (components != null) {
             for (ShopBundleCreateReq.ComponentInput c : components) {
                 if (c == null || StringUtils.isBlank(c.getProductId())) continue;
                 String id = numericId(c.getProductId());
                 int q = c.getQuantity() == null ? 1 : Math.max(1, c.getQuantity());
                 String variantId = StringUtils.isBlank(c.getVariantId()) ? null : numericId(c.getVariantId());
+                // Context is already seeded at qty 1 — do not double-count if FE also sends it.
+                if (id.equals(contextId)) {
+                    byId.put(id, new ShopifyProductBundleComponent.ComponentSpec(
+                            id,
+                            1,
+                            variantId != null ? variantId : contextVariant));
+                    continue;
+                }
                 ShopifyProductBundleComponent.ComponentSpec existing = byId.get(id);
                 if (existing == null) {
                     byId.put(id, new ShopifyProductBundleComponent.ComponentSpec(id, q, variantId));

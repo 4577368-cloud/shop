@@ -11,6 +11,11 @@ public class ShopBundleUpdateReq {
     private Long bundleId;
     private String title;
     private BigDecimal parentPrice;
+    /**
+     * Optional Shopify variant id for the context (base) component.
+     * When set, optionSelections for the base product are pinned to that variant.
+     */
+    private String contextVariantId;
     /** Optional percent off vs sum of component list prices (stored + metafield for Function). */
     private BigDecimal discountPercent;
     private List<ShopBundleCreateReq.ComponentInput> components;

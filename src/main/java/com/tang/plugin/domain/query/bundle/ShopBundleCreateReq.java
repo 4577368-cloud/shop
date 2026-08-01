@@ -10,6 +10,11 @@ public class ShopBundleCreateReq {
     private String shopName;
     /** Card product id — becomes default first component + title seed. */
     private String contextProductId;
+    /**
+     * Optional Shopify variant id for the context (base) component.
+     * When set, optionSelections for the base product are pinned to that variant.
+     */
+    private String contextVariantId;
     private String title;
     private BigDecimal parentPrice;
     private List<ComponentInput> components;
