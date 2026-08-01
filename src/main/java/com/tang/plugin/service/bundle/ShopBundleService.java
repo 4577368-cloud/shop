@@ -506,6 +506,16 @@ public class ShopBundleService {
         card.setParentProductId(numericId(row.getParentProductId()));
         card.setParentTitle(row.getParentTitle());
         card.setComponentCount(components.size());
+        if (asParent || card.getComponentProductIds() == null || card.getComponentProductIds().isEmpty()) {
+            List<String> ids = new ArrayList<>();
+            for (ShopBundleVO.ComponentVO c : components) {
+                if (c != null && StringUtils.isNotBlank(c.getProductId())) {
+                    ids.add(numericId(c.getProductId()));
+                }
+            }
+            card.setComponentProductIds(ids);
+            card.setComponentCount(ids.isEmpty() ? components.size() : ids.size());
+        }
         card.setAsParent(card.isAsParent() || asParent);
         card.setAsComponent(card.isAsComponent() || asComponent);
         card.setManagedByApp(row.getManagedByApp() == 1);

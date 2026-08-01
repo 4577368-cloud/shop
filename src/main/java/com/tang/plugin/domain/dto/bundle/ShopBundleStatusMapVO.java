@@ -3,6 +3,7 @@ package com.tang.plugin.domain.dto.bundle;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
@@ -20,6 +21,8 @@ public class ShopBundleStatusMapVO {
         private String parentProductId;
         private String parentTitle;
         private int componentCount;
+        /** Component Shopify product ids (numeric) — for kit-parent cards. */
+        private List<String> componentProductIds;
         private boolean asParent;
         private boolean asComponent;
         private boolean managedByApp;
