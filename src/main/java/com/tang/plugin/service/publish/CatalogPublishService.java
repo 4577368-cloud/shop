@@ -303,10 +303,15 @@ public class CatalogPublishService {
 
     /**
      * Product description: prefer rich itemGet HTML; else stub from 规格 / 供应商 / 链接.
+     * Upstream HTML is lightly sanitized (百度盘 / script / literal null) before Shopify write.
      */
     private static String resolveDescriptionHtml(TangbuyCatalogProduct c) {
         String rich = StringUtils.trimToNull(c.getDescriptionHtml());
         if (rich != null) {
+            rich = com.tang.plugin.service.publish.support.ProductDescriptionHtmlSanitizer.sanitize(rich);
+            if (StringUtils.isBlank(rich)) {
+                return buildDescriptionHtml(c);
+            }
             if (StringUtils.isNotBlank(c.getTangbuyUrl()) && !rich.contains(c.getTangbuyUrl())) {
                 String url = c.getTangbuyUrl().trim();
                 rich = rich + "<p>货源链接：<a href=\"" + escapeHtml(url)

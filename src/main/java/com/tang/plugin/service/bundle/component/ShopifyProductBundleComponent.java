@@ -334,16 +334,19 @@ public class ShopifyProductBundleComponent {
                     } catch (Exception ignored) {
                         /* title optional */
                     }
+                    String imageUrl = firstImageUrl(p);
                     lines.add(new ComponentLine(
-                            StringUtils.defaultIfBlank(title, "Product " + numericProductId(spec.productId())),
-                            Math.max(1, spec.quantity())));
+                            shortDisplayTitle(StringUtils.defaultIfBlank(
+                                    title, "Product " + numericProductId(spec.productId()))),
+                            Math.max(1, spec.quantity()),
+                            imageUrl));
                     if (imageUrls.isEmpty() && p != null) {
                         imageUrls = collectImageUrls(p);
                     }
                 }
             }
 
-            String descriptionHtml = buildBundleDescriptionHtml(context, lines);
+            String descriptionHtml = buildBundleDescriptionHtml(context);
             JSONObject parentNow = fetchProductOptions(
                     shopName, shopDomain, accessToken, toProductGid(parentProductId));
             JSONObject product = new JSONObject();
@@ -423,6 +426,9 @@ public class ShopifyProductBundleComponent {
             JSONObject o = new JSONObject();
             o.put("title", line.title());
             o.put("quantity", line.quantity());
+            if (StringUtils.isNotBlank(line.imageUrl())) {
+                o.put("imageUrl", line.imageUrl());
+            }
             arr.add(o);
         }
         setJsonMetafield(shopName, shopDomain, accessToken,
@@ -566,38 +572,36 @@ public class ShopifyProductBundleComponent {
         return urls;
     }
 
-    private static String buildBundleDescriptionHtml(JSONObject context, List<ComponentLine> lines) {
-        StringBuilder html = new StringBuilder();
-        html.append("<div class=\"tangbuy-fixed-bundle\">");
-        html.append("<p><strong>Bundle includes</strong></p><ul>");
-        for (ComponentLine line : lines) {
-            html.append("<li>")
-                    .append(escapeHtml(line.title()))
-                    .append(" ×")
-                    .append(line.quantity())
-                    .append("</li>");
-        }
-        html.append("</ul>");
+    /**
+     * Kit composition is shown by the theme App Block (metafield). Description only
+     * carries the main product's cleaned detail HTML — no duplicate "Bundle includes" list.
+     */
+    private static String buildBundleDescriptionHtml(JSONObject context) {
         String contextDesc = context == null ? null : context.getString("descriptionHtml");
-        if (StringUtils.isNotBlank(contextDesc)) {
-            html.append("<div class=\"tangbuy-bundle-base-desc\">")
-                    .append(contextDesc)
-                    .append("</div>");
+        if (StringUtils.isBlank(contextDesc)) {
+            return null;
         }
-        html.append("</div>");
-        return html.toString();
+        String cleaned = com.tang.plugin.service.publish.support.ProductDescriptionHtmlSanitizer
+                .sanitize(contextDesc);
+        if (StringUtils.isBlank(cleaned)) {
+            return null;
+        }
+        return "<div class=\"tangbuy-bundle-base-desc\">" + cleaned + "</div>";
     }
 
-    private static String escapeHtml(String raw) {
-        if (raw == null) return "";
-        return raw
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;");
+    private static String firstImageUrl(JSONObject product) {
+        List<String> urls = collectImageUrls(product);
+        return urls.isEmpty() ? null : urls.get(0);
     }
 
-    private record ComponentLine(String title, int quantity) {}
+    /** Keep PDP kit rows readable — full titles stay on the linked shop products. */
+    private static String shortDisplayTitle(String title) {
+        String t = StringUtils.trimToEmpty(title);
+        if (t.length() <= 48) return t;
+        return t.substring(0, 47) + "…";
+    }
+
+    private record ComponentLine(String title, int quantity, String imageUrl) {}
 
     public JSONObject fetchProductOptions(String shopName, String shopDomain, String accessToken, String productGid) {
         JSONObject variables = new JSONObject();
