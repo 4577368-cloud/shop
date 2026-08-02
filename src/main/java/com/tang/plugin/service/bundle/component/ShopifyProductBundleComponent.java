@@ -451,6 +451,37 @@ public class ShopifyProductBundleComponent {
                 productId, "tangbuy_gift", "rule", ruleJson);
     }
 
+    /** Mix & Match rule on each pool product (Bundle Hub). */
+    public void writeMixRuleMetafield(String shopName, String shopDomain, String accessToken,
+                                      String productId, String ruleJson) {
+        if (StringUtils.isAnyBlank(productId, ruleJson)) return;
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                productId, "tangbuy_mix", "rule", ruleJson);
+    }
+
+    public void clearMixRuleMetafield(String shopName, String shopDomain, String accessToken,
+                                      String productId) {
+        if (StringUtils.isBlank(productId)) return;
+        // Empty JSON object marks inactive; Function ignores missing/empty campaignId.
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                productId, "tangbuy_mix", "rule", "{}");
+    }
+
+    /** BYOB slot template on pool products (multi-line checkout). */
+    public void writeByobRuleMetafield(String shopName, String shopDomain, String accessToken,
+                                       String productId, String ruleJson) {
+        if (StringUtils.isAnyBlank(productId, ruleJson)) return;
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                productId, "tangbuy_byob", "rule", ruleJson);
+    }
+
+    public void clearByobRuleMetafield(String shopName, String shopDomain, String accessToken,
+                                       String productId) {
+        if (StringUtils.isBlank(productId)) return;
+        setJsonMetafield(shopName, shopDomain, accessToken,
+                productId, "tangbuy_byob", "rule", "{}");
+    }
+
     private static String mergeKitTag(Object tagsRaw) {
         java.util.LinkedHashSet<String> tags = parseTags(tagsRaw);
         tags.add(KIT_TAG);

@@ -1234,3 +1234,24 @@ CREATE INDEX IF NOT EXISTS idx_spb_shop_status
 
 -- Live DBs created before discount_percent: safe no-op when column exists.
 ALTER TABLE shop_product_bundle ADD COLUMN IF NOT EXISTS discount_percent DECIMAL(5, 2);
+
+-- Bundle Hub campaigns (mix_match / byob / product_offer headers; fixed kits still use shop_product_bundle)
+CREATE TABLE IF NOT EXISTS shop_bundle_campaign (
+    id                      VARCHAR(64)   NOT NULL PRIMARY KEY,
+    shop_name               VARCHAR(128)  NOT NULL,
+    play_type               VARCHAR(32)   NOT NULL,
+    title                   VARCHAR(512)  NOT NULL,
+    status                  VARCHAR(32)   NOT NULL,
+    rule_json               TEXT,
+    pool_json               TEXT,
+    shopify_refs_json       TEXT,
+    linked_bundle_id        BIGINT,
+    del_flag                INT           NOT NULL DEFAULT 0,
+    created_at              TIMESTAMP,
+    updated_at              TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sbc_shop_play
+    ON shop_bundle_campaign (shop_name, play_type, del_flag);
+CREATE INDEX IF NOT EXISTS idx_sbc_shop_updated
+    ON shop_bundle_campaign (shop_name, updated_at DESC, del_flag);
