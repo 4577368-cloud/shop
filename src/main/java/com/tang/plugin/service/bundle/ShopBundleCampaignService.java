@@ -217,7 +217,13 @@ public class ShopBundleCampaignService {
         metafieldRule.put("campaignId", row.getId());
         metafieldRule.put("label", row.getTitle());
         metafieldRule.put("status", status);
+        enrichByobPoolProducts(
+                req.getShopName(), auth.getShopDomain(), auth.getAccessToken(), metafieldRule, allPool);
         String ruleJson = metafieldRule.toJSONString();
+
+        // Keep DB rule in sync with storefront enrichment (handles / variantIds).
+        row.setRuleJson(metafieldRule.toJSONString());
+        campaignRepository.update(row);
 
         Set<String> next = new HashSet<>(allPool);
         for (String removed : previousPool) {
@@ -263,6 +269,62 @@ public class ShopBundleCampaignService {
     private ShopifyStoreAuth requireAuth(String shopName) {
         return shopifyStoreAuthService.findActiveFreshByShopName(shopName)
                 .orElseThrow(() -> new CustomException("Shopify store not authorized: " + shopName));
+    }
+
+    /**
+     * Ensure each slot has poolProducts with handle/title/variantId for Theme Block.
+     * Merges FE-provided poolProducts with Admin GraphQL resolution.
+     */
+    private void enrichByobPoolProducts(String shopName, String shopDomain, String accessToken,
+                                        JSONObject metafieldRule, Set<String> allPool) {
+        JSONObject resolved = bundleComponent.resolveProductStorefrontFields(
+                shopName, shopDomain, accessToken, allPool);
+        JSONArray slots = metafieldRule.getJSONArray("slots");
+        if (slots == null) return;
+        for (int i = 0; i < slots.size(); i++) {
+            JSONObject slot = slots.getJSONObject(i);
+            if (slot == null) continue;
+            JSONArray poolIds = slot.getJSONArray("poolProductIds");
+            if (poolIds == null || poolIds.isEmpty()) {
+                slot.put("poolProducts", new JSONArray());
+                continue;
+            }
+            JSONArray existing = slot.getJSONArray("poolProducts");
+            java.util.Map<String, JSONObject> fromFe = new java.util.HashMap<>();
+            if (existing != null) {
+                for (int j = 0; j < existing.size(); j++) {
+                    JSONObject p = existing.getJSONObject(j);
+                    if (p == null) continue;
+                    String id = numericId(p.getString("id"));
+                    if (StringUtils.isNotBlank(id)) fromFe.put(id, p);
+                }
+            }
+            JSONArray next = new JSONArray();
+            for (int j = 0; j < poolIds.size(); j++) {
+                String id = numericId(poolIds.getString(j));
+                if (StringUtils.isBlank(id)) continue;
+                JSONObject row = new JSONObject();
+                row.put("id", id);
+                JSONObject fe = fromFe.get(id);
+                JSONObject api = resolved.getJSONObject(id);
+                if (fe != null) {
+                    if (StringUtils.isNotBlank(fe.getString("handle"))) row.put("handle", fe.getString("handle"));
+                    if (StringUtils.isNotBlank(fe.getString("title"))) row.put("title", fe.getString("title"));
+                    if (StringUtils.isNotBlank(fe.getString("variantId"))) {
+                        row.put("variantId", numericId(fe.getString("variantId")));
+                    }
+                }
+                if (api != null) {
+                    if (StringUtils.isBlank(row.getString("handle"))) row.put("handle", api.getString("handle"));
+                    if (StringUtils.isBlank(row.getString("title"))) row.put("title", api.getString("title"));
+                    if (StringUtils.isBlank(row.getString("variantId"))) {
+                        row.put("variantId", api.getString("variantId"));
+                    }
+                }
+                next.add(row);
+            }
+            slot.put("poolProducts", next);
+        }
     }
 
     private static ShopBundleCampaignVO toVo(ShopBundleCampaign row) {

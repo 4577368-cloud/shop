@@ -379,8 +379,8 @@ public class ShopBundleService {
                 .setProductId(numericId(req.getProductId()))
                 .setKind(kind)
                 .setSaved(true)
-                .setCheckoutPending(true)
-                .setMessage("Gift rule saved. Auto free-gift at checkout is pending Function iteration.");
+                .setCheckoutPending(false)
+                .setMessage("Gift rule saved. Add the Free gift Theme Block on the trigger PDP; Discount Function applies 100% when gift is in cart.");
     }
 
     public ShopBundleVO dissolve(String shopName, Long bundleId) {

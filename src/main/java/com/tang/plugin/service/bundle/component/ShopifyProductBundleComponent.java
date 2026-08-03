@@ -67,6 +67,21 @@ public class ShopifyProductBundleComponent {
             }
             """;
 
+    private static final String PRODUCTS_BY_IDS = """
+            query ProductsByIds($ids: [ID!]!) {
+              nodes(ids: $ids) {
+                ... on Product {
+                  id
+                  handle
+                  title
+                  variants(first: 1) {
+                    nodes { id }
+                  }
+                }
+              }
+            }
+            """;
+
     private static final String PRODUCT_UPDATE_FIELDS = """
             mutation BundleParentFields($product: ProductUpdateInput!) {
               productUpdate(product: $product) {
@@ -480,6 +495,48 @@ public class ShopifyProductBundleComponent {
         if (StringUtils.isBlank(productId)) return;
         setJsonMetafield(shopName, shopDomain, accessToken,
                 productId, "tangbuy_byob", "rule", "{}");
+    }
+
+    /**
+     * Resolve product id → handle / title / first variant for Theme Block poolProducts.
+     */
+    public JSONObject resolveProductStorefrontFields(String shopName, String shopDomain, String accessToken,
+                                                     java.util.Collection<String> productIds) {
+        JSONObject out = new JSONObject();
+        if (productIds == null || productIds.isEmpty()) return out;
+        JSONArray ids = new JSONArray();
+        for (String pid : productIds) {
+            if (StringUtils.isBlank(pid)) continue;
+            ids.add(toProductGid(pid));
+        }
+        if (ids.isEmpty()) return out;
+        JSONObject variables = new JSONObject();
+        variables.put("ids", ids);
+        try {
+            JSONObject response = shopifyGraphqlClient.execute(
+                    shopName, shopDomain, accessToken, PRODUCTS_BY_IDS, variables);
+            JSONObject data = response.getJSONObject("data");
+            JSONArray nodes = data == null ? null : data.getJSONArray("nodes");
+            if (nodes == null) return out;
+            for (int i = 0; i < nodes.size(); i++) {
+                JSONObject node = nodes.getJSONObject(i);
+                if (node == null || StringUtils.isBlank(node.getString("id"))) continue;
+                String id = numericProductId(node.getString("id"));
+                JSONObject row = new JSONObject();
+                row.put("id", id);
+                row.put("handle", node.getString("handle"));
+                row.put("title", node.getString("title"));
+                JSONObject variants = node.getJSONObject("variants");
+                JSONArray vnodes = variants == null ? null : variants.getJSONArray("nodes");
+                if (vnodes != null && !vnodes.isEmpty() && vnodes.getJSONObject(0) != null) {
+                    row.put("variantId", numericProductId(vnodes.getJSONObject(0).getString("id")));
+                }
+                out.put(id, row);
+            }
+        } catch (Exception e) {
+            log.warn("BYOB product resolve failed shop={}: {}", shopName, e.getMessage());
+        }
+        return out;
     }
 
     private static String mergeKitTag(Object tagsRaw) {
