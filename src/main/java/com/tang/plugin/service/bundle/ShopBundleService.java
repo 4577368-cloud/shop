@@ -360,6 +360,8 @@ public class ShopBundleService {
 
         JSONObject rule = new JSONObject();
         rule.put("kind", kind);
+        rule.put("status", "ACTIVE");
+        rule.put("schemaVersion", 1);
         rule.put("triggerProductId", numericId(req.getProductId()));
         rule.put("minQty", minQty);
         rule.put("giftProductId", numericId(req.getGiftProductId()));
@@ -368,6 +370,8 @@ public class ShopBundleService {
         rule.put("label", StringUtils.defaultIfBlank(req.getLabel(), ""));
 
         ShopifyStoreAuth auth = requireAuth(req.getShopName());
+        bundleComponent.enrichGiftRuleDisplay(
+                req.getShopName(), auth.getShopDomain(), auth.getAccessToken(), rule);
         bundleComponent.writeGiftRuleMetafield(
                 req.getShopName(),
                 auth.getShopDomain(),

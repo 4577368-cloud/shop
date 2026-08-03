@@ -214,6 +214,8 @@ public class ShopBundleCampaignService {
 
         ShopifyStoreAuth auth = requireAuth(req.getShopName());
         JSONObject metafieldRule = new JSONObject(rule);
+        metafieldRule.put("kind", "byob");
+        metafieldRule.put("schemaVersion", 1);
         metafieldRule.put("campaignId", row.getId());
         metafieldRule.put("label", row.getTitle());
         metafieldRule.put("status", status);
@@ -319,6 +321,23 @@ public class ShopBundleCampaignService {
                     if (StringUtils.isBlank(row.getString("title"))) row.put("title", api.getString("title"));
                     if (StringUtils.isBlank(row.getString("variantId"))) {
                         row.put("variantId", api.getString("variantId"));
+                    }
+                    if (StringUtils.isBlank(row.getString("variantTitle"))
+                            && StringUtils.isNotBlank(api.getString("variantTitle"))) {
+                        row.put("variantTitle", api.getString("variantTitle"));
+                    }
+                    if (StringUtils.isBlank(row.getString("imageUrl"))
+                            && StringUtils.isNotBlank(api.getString("imageUrl"))) {
+                        row.put("imageUrl", api.getString("imageUrl"));
+                    }
+                    if (row.get("price") == null && api.get("price") != null) {
+                        row.put("price", api.get("price"));
+                    }
+                    if (row.get("compareAtPrice") == null && api.get("compareAtPrice") != null) {
+                        row.put("compareAtPrice", api.get("compareAtPrice"));
+                    }
+                    if (row.get("available") == null && api.get("available") != null) {
+                        row.put("available", api.get("available"));
                     }
                 }
                 next.add(row);

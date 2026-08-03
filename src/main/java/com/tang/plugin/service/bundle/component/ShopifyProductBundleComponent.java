@@ -60,6 +60,9 @@ public class ShopifyProductBundleComponent {
                     id
                     title
                     price
+                    compareAtPrice
+                    availableForSale
+                    image { url }
                     selectedOptions { name value }
                   }
                 }
@@ -74,8 +77,16 @@ public class ShopifyProductBundleComponent {
                   id
                   handle
                   title
+                  featuredImage { url }
                   variants(first: 1) {
-                    nodes { id }
+                    nodes {
+                      id
+                      title
+                      price
+                      compareAtPrice
+                      availableForSale
+                      image { url }
+                    }
                   }
                 }
               }
@@ -466,6 +477,57 @@ public class ShopifyProductBundleComponent {
                 productId, "tangbuy_gift", "rule", ruleJson);
     }
 
+    /**
+     * Enrich qty_gift rule with storefront display fields (title/image/prices in cents).
+     */
+    public void enrichGiftRuleDisplay(String shopName, String shopDomain, String accessToken,
+                                      JSONObject rule) {
+        if (rule == null) return;
+        String giftProductId = numericProductId(rule.getString("giftProductId"));
+        String giftVariantId = numericProductId(rule.getString("giftVariantId"));
+        if (StringUtils.isBlank(giftProductId)) return;
+        try {
+            JSONObject product = fetchProductOptions(
+                    shopName, shopDomain, accessToken, toProductGid(giftProductId));
+            if (product == null) return;
+            if (StringUtils.isBlank(rule.getString("giftTitle"))) {
+                rule.put("giftTitle", product.getString("title"));
+            }
+            JSONObject featured = product.getJSONObject("featuredImage");
+            JSONObject matched = findVariant(product, giftVariantId);
+            if (matched == null) {
+                JSONObject variants = product.getJSONObject("variants");
+                JSONArray nodes = variants == null ? null : variants.getJSONArray("nodes");
+                if (nodes != null && !nodes.isEmpty()) matched = nodes.getJSONObject(0);
+            }
+            if (matched != null) {
+                if (StringUtils.isBlank(rule.getString("giftVariantId"))) {
+                    rule.put("giftVariantId", numericProductId(matched.getString("id")));
+                }
+                if (!"Default Title".equalsIgnoreCase(StringUtils.defaultString(matched.getString("title")))
+                        && StringUtils.isBlank(rule.getString("giftSubtitle"))) {
+                    rule.put("giftSubtitle", matched.getString("title"));
+                }
+                Long priceCents = moneyToCents(matched.get("price"));
+                if (priceCents != null) rule.put("giftPrice", priceCents);
+                Long compareCents = moneyToCents(matched.get("compareAtPrice"));
+                if (compareCents != null) rule.put("giftCompareAtPrice", compareCents);
+                JSONObject vImg = matched.getJSONObject("image");
+                if (vImg != null && StringUtils.isNotBlank(vImg.getString("url"))) {
+                    rule.put("giftImage", vImg.getString("url"));
+                }
+            }
+            if (StringUtils.isBlank(rule.getString("giftImage"))
+                    && featured != null
+                    && StringUtils.isNotBlank(featured.getString("url"))) {
+                rule.put("giftImage", featured.getString("url"));
+            }
+        } catch (Exception e) {
+            log.warn("Gift display enrich failed shop={} giftProduct={}: {}",
+                    shopName, giftProductId, e.getMessage());
+        }
+    }
+
     /** Mix & Match rule on each pool product (Bundle Hub). */
     public void writeMixRuleMetafield(String shopName, String shopDomain, String accessToken,
                                       String productId, String ruleJson) {
@@ -498,7 +560,8 @@ public class ShopifyProductBundleComponent {
     }
 
     /**
-     * Resolve product id → handle / title / first variant for Theme Block poolProducts.
+     * Resolve product id → storefront poolProduct fields for BYOB Theme Block (schema v1).
+     * Prices are integer cents for Liquid | money.
      */
     public JSONObject resolveProductStorefrontFields(String shopName, String shopDomain, String accessToken,
                                                      java.util.Collection<String> productIds) {
@@ -526,10 +589,33 @@ public class ShopifyProductBundleComponent {
                 row.put("id", id);
                 row.put("handle", node.getString("handle"));
                 row.put("title", node.getString("title"));
+                JSONObject featured = node.getJSONObject("featuredImage");
+                if (featured != null && StringUtils.isNotBlank(featured.getString("url"))) {
+                    row.put("imageUrl", featured.getString("url"));
+                }
                 JSONObject variants = node.getJSONObject("variants");
                 JSONArray vnodes = variants == null ? null : variants.getJSONArray("nodes");
                 if (vnodes != null && !vnodes.isEmpty() && vnodes.getJSONObject(0) != null) {
-                    row.put("variantId", numericProductId(vnodes.getJSONObject(0).getString("id")));
+                    JSONObject v = vnodes.getJSONObject(0);
+                    row.put("variantId", numericProductId(v.getString("id")));
+                    if (StringUtils.isNotBlank(v.getString("title"))
+                            && !"Default Title".equalsIgnoreCase(v.getString("title"))) {
+                        row.put("variantTitle", v.getString("title"));
+                    }
+                    Long priceCents = moneyToCents(v.get("price"));
+                    if (priceCents != null) row.put("price", priceCents);
+                    Long compareCents = moneyToCents(v.get("compareAtPrice"));
+                    if (compareCents != null) row.put("compareAtPrice", compareCents);
+                    if (v.get("availableForSale") != null) {
+                        row.put("available", Boolean.TRUE.equals(v.getBoolean("availableForSale")));
+                    } else {
+                        row.put("available", true);
+                    }
+                    JSONObject vImg = v.getJSONObject("image");
+                    if (vImg != null && StringUtils.isNotBlank(vImg.getString("url"))
+                            && StringUtils.isBlank(row.getString("imageUrl"))) {
+                        row.put("imageUrl", vImg.getString("url"));
+                    }
                 }
                 out.put(id, row);
             }
@@ -537,6 +623,24 @@ public class ShopifyProductBundleComponent {
             log.warn("BYOB product resolve failed shop={}: {}", shopName, e.getMessage());
         }
         return out;
+    }
+
+    /** Admin Money string/number → integer cents for Liquid money filter. */
+    private static Long moneyToCents(Object raw) {
+        if (raw == null) return null;
+        try {
+            java.math.BigDecimal d;
+            if (raw instanceof Number n) {
+                d = new java.math.BigDecimal(n.toString());
+            } else {
+                String s = String.valueOf(raw).trim();
+                if (s.isEmpty()) return null;
+                d = new java.math.BigDecimal(s);
+            }
+            return d.movePointRight(2).setScale(0, java.math.RoundingMode.HALF_UP).longValueExact();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String mergeKitTag(Object tagsRaw) {
