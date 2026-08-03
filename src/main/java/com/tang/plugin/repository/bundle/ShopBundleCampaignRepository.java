@@ -39,7 +39,42 @@ public class ShopBundleCampaignRepository {
     @Resource
     private JdbcTemplate jdbcTemplate;
 
+    private volatile boolean schemaReady = false;
+
+    /** Prod may skip schema.sql — create table on first use. */
+    public void ensureSchema() {
+        if (schemaReady) return;
+        synchronized (this) {
+            if (schemaReady) return;
+            jdbcTemplate.execute("""
+                    CREATE TABLE IF NOT EXISTS shop_bundle_campaign (
+                        id                      VARCHAR(64)   NOT NULL PRIMARY KEY,
+                        shop_name               VARCHAR(128)  NOT NULL,
+                        play_type               VARCHAR(32)   NOT NULL,
+                        title                   VARCHAR(512)  NOT NULL,
+                        status                  VARCHAR(32)   NOT NULL,
+                        rule_json               TEXT,
+                        pool_json               TEXT,
+                        shopify_refs_json       TEXT,
+                        linked_bundle_id        BIGINT,
+                        del_flag                INT           NOT NULL DEFAULT 0,
+                        created_at              TIMESTAMP,
+                        updated_at              TIMESTAMP
+                    )
+                    """);
+            try {
+                jdbcTemplate.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_sbc_shop_play "
+                                + "ON shop_bundle_campaign (shop_name, play_type, del_flag)");
+            } catch (Exception ignored) {
+                /* index may already exist under another name */
+            }
+            schemaReady = true;
+        }
+    }
+
     public Optional<ShopBundleCampaign> findById(String id) {
+        ensureSchema();
         if (StringUtils.isBlank(id)) return Optional.empty();
         try {
             return Optional.ofNullable(jdbcTemplate.queryForObject(
@@ -51,6 +86,7 @@ public class ShopBundleCampaignRepository {
     }
 
     public List<ShopBundleCampaign> listByShop(String shopName) {
+        ensureSchema();
         if (StringUtils.isBlank(shopName)) return Collections.emptyList();
         return jdbcTemplate.query(
                 "SELECT " + COLUMNS + " FROM shop_bundle_campaign "
@@ -61,6 +97,7 @@ public class ShopBundleCampaignRepository {
     }
 
     public void insert(ShopBundleCampaign row) {
+        ensureSchema();
         Instant now = Instant.now();
         jdbcTemplate.update(
                 "INSERT INTO shop_bundle_campaign ("
@@ -82,6 +119,7 @@ public class ShopBundleCampaignRepository {
     }
 
     public void update(ShopBundleCampaign row) {
+        ensureSchema();
         Instant now = Instant.now();
         jdbcTemplate.update(
                 "UPDATE shop_bundle_campaign SET title = ?, status = ?, rule_json = ?, pool_json = ?, "
@@ -100,6 +138,7 @@ public class ShopBundleCampaignRepository {
     }
 
     public void softDelete(String shopName, String id) {
+        ensureSchema();
         jdbcTemplate.update(
                 "UPDATE shop_bundle_campaign SET del_flag = 1, status = 'ARCHIVED', updated_at = ? "
                         + "WHERE id = ? AND shop_name = ? AND del_flag = 0",

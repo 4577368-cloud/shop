@@ -171,35 +171,45 @@ public class ShopBundleCampaignService {
                 throw new CustomException("Slot pool products must have ACTIVE binding: " + pid);
             }
         }
+        if (allPool.isEmpty()) {
+            throw new CustomException("At least one slot needs selectable products");
+        }
 
         String status = StringUtils.defaultIfBlank(req.getStatus(), "DRAFT").trim().toUpperCase();
         ShopBundleCampaign row;
         Set<String> previousPool = new HashSet<>();
-        if (StringUtils.isNotBlank(req.getId())) {
-            row = campaignRepository.findById(req.getId())
-                    .orElseThrow(() -> new CustomException("Campaign not found"));
-            if (!req.getShopName().equals(row.getShopName())) {
-                throw new CustomException("Campaign shop mismatch");
+        try {
+            if (StringUtils.isNotBlank(req.getId())) {
+                row = campaignRepository.findById(req.getId())
+                        .orElseThrow(() -> new CustomException("Campaign not found"));
+                if (!req.getShopName().equals(row.getShopName())) {
+                    throw new CustomException("Campaign shop mismatch");
+                }
+                if (!"byob".equals(row.getPlayType())) {
+                    throw new CustomException("Campaign playType mismatch");
+                }
+                previousPool.addAll(parsePool(row.getPoolJson()));
+                row.setTitle(req.getTitle().trim())
+                        .setStatus(status)
+                        .setRuleJson(rule.toJSONString())
+                        .setPoolJson(JSON.toJSONString(new ArrayList<>(allPool)));
+                campaignRepository.update(row);
+            } else {
+                row = new ShopBundleCampaign()
+                        .setId(newId())
+                        .setShopName(req.getShopName())
+                        .setPlayType("byob")
+                        .setTitle(req.getTitle().trim())
+                        .setStatus(status)
+                        .setRuleJson(rule.toJSONString())
+                        .setPoolJson(JSON.toJSONString(new ArrayList<>(allPool)));
+                campaignRepository.insert(row);
             }
-            if (!"byob".equals(row.getPlayType())) {
-                throw new CustomException("Campaign playType mismatch");
-            }
-            previousPool.addAll(parsePool(row.getPoolJson()));
-            row.setTitle(req.getTitle().trim())
-                    .setStatus(status)
-                    .setRuleJson(rule.toJSONString())
-                    .setPoolJson(JSON.toJSONString(new ArrayList<>(allPool)));
-            campaignRepository.update(row);
-        } else {
-            row = new ShopBundleCampaign()
-                    .setId(newId())
-                    .setShopName(req.getShopName())
-                    .setPlayType("byob")
-                    .setTitle(req.getTitle().trim())
-                    .setStatus(status)
-                    .setRuleJson(rule.toJSONString())
-                    .setPoolJson(JSON.toJSONString(new ArrayList<>(allPool)));
-            campaignRepository.insert(row);
+        } catch (CustomException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("BYOB campaign persist failed shop={}: {}", req.getShopName(), e.getMessage(), e);
+            throw new CustomException("Failed to save BYOB campaign: " + e.getMessage());
         }
 
         ShopifyStoreAuth auth = requireAuth(req.getShopName());
