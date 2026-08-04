@@ -119,7 +119,8 @@ public class ShopifySessionTokenService {
             platformToken = shopifyPlatformLoginService.login(shopName, profile.email(), profile.name());
             userId = parseUserId(platformToken);
             email = profile.email();
-            userShopRepository.updateOwnerByShopName(userId, shopName, shopDomain);
+            // Do not steal ownership from an existing standalone binding when Admin
+            // session-token provisions a different platform user for the same shop.
             if (userShopRepository.findByShopName(shopName).isEmpty()) {
                 userShopRepository.upsertBinding(userId, shopName, shopDomain);
             }

@@ -18,6 +18,8 @@ public class UserOauthState {
     private String stateHash;
     private Long userId;
     private String shopDomain;
+    /** STANDALONE | EMBEDDED | LOGIN — drives post-OAuth redirect. */
+    private String flow;
     private Instant expiresAt;
     private Instant consumedAt;
     private Instant createdAt;

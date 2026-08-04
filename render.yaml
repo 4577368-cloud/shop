@@ -58,7 +58,7 @@ services:
         value: https://shop-x2mw.onrender.com
       # OAuth 完成后跳回独立站前端（与 Vercel 生产域名一致）
       - key: TANG_PLUGIN_FRONTEND_BASE_URL
-        value: https://ai.tangbuy.com
+        value: https://source.tangbuy.cc
       # Tangbuy portal JWT (dropshipping.tangbuy.cc login). Set in Render Dashboard — never commit.
       - key: TANG_PLUGIN_TANGBUY_MALL_TOKEN
         sync: false
@@ -77,7 +77,7 @@ services:
         value: "none"
       # P2 CORS 白名单：允许前端域名 + 本地开发。逗号分隔。
       - key: TANG_PLUGIN_CORS_ALLOWED_ORIGINS
-        value: "https://ai.tangbuy.com,http://localhost:3000"
+        value: "https://source.tangbuy.cc,https://ai.tangbuy.com,http://localhost:3000"
       # P3.2 PayPal 沙盒凭证。生产部署前切到 Live 凭证并改 mode=live。
       # Client ID 与前端 NEXT_PUBLIC_PAYPAL_CLIENT_ID 同值；Secret 仅后端持有，永不提交。
       - key: TANG_PLUGIN_PAYPAL_MODE

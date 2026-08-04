@@ -704,6 +704,7 @@ CREATE TABLE IF NOT EXISTS user_oauth_state (
     state_hash          VARCHAR(255)  NOT NULL,
     user_id             BIGINT        NOT NULL,
     shop_domain         VARCHAR(255)  NOT NULL,
+    flow                VARCHAR(32),
     expires_at          TIMESTAMP     NOT NULL,
     consumed_at         TIMESTAMP,
     created_at          TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -48,6 +48,13 @@ import java.util.UUID;
 @Service
 public class ShopifyAuthService {
 
+    /** Standalone authorize / Connect — return to frontend /authorize after OAuth. */
+    public static final String FLOW_STANDALONE = "STANDALONE";
+    /** Admin / App Store embedded install — bounce back into Admin. */
+    public static final String FLOW_EMBEDDED = "EMBEDDED";
+    /** Standalone "Login with Shopify" — set session cookies, then return_to. */
+    public static final String FLOW_LOGIN = "LOGIN";
+
     /** OAuth state TTL — must be long enough for the Shopify consent screen but short enough to limit replay. */
     private static final long OAUTH_STATE_TTL_SECONDS = 600L; // 10 minutes
 
@@ -168,7 +175,7 @@ public class ShopifyAuthService {
         if (userId == null) {
             throw new CustomException("User must be authenticated to install a shop", 401, "UNAUTHENTICATED");
         }
-        return buildInstallUrlInternal(userId, shop);
+        return buildInstallUrlInternal(userId, shop, FLOW_STANDALONE);
     }
 
     /**
@@ -177,18 +184,25 @@ public class ShopifyAuthService {
      * callback auto-creates/binds a Tangbuy user from the shop email.
      */
     public String buildInstallUrlAutoProvision(String shop) {
-        return buildInstallUrlInternal(ShopifyMerchantProvisionService.AUTO_PROVISION_USER_ID, shop);
+        return buildInstallUrlInternal(
+                ShopifyMerchantProvisionService.AUTO_PROVISION_USER_ID, shop, FLOW_EMBEDDED);
     }
 
-    private String buildInstallUrlInternal(Long userId, String shop) {
+    /** Standalone Login with Shopify (auto-provision + session cookies on callback). */
+    public String buildInstallUrlLogin(String shop) {
+        return buildInstallUrlInternal(
+                ShopifyMerchantProvisionService.AUTO_PROVISION_USER_ID, shop, FLOW_LOGIN);
+    }
+
+    private String buildInstallUrlInternal(Long userId, String shop, String flow) {
         assertConfigured();
         String shopDomain = normalizeAndValidateShop(shop);
         String rawState = UUID.randomUUID().toString().replace("-", "");
         String stateHash = jwtService.hashToken(rawState);
         Instant expiresAt = Instant.now().plusSeconds(OAUTH_STATE_TTL_SECONDS);
-        userOauthStateRepository.insert(stateHash, userId, shopDomain, expiresAt);
-        log.info("Shopify install redirect prepared userId={} shopDomain={} stateExpiresAt={}",
-                userId, shopDomain, expiresAt);
+        userOauthStateRepository.insert(stateHash, userId, shopDomain, flow, expiresAt);
+        log.info("Shopify install redirect prepared userId={} shopDomain={} flow={} stateExpiresAt={}",
+                userId, shopDomain, flow, expiresAt);
         return shopifyAuthComponent.buildInstallRedirectUrl(shopDomain, rawState);
     }
 
@@ -235,6 +249,7 @@ public class ShopifyAuthService {
                 result.put("shopDomain", shopDomain);
                 result.put("shopName", shopName);
                 result.put("authId", null);
+                result.put("oauthFlow", resolveFlow(oauthState));
                 result.put("fulfillmentMounted", false);
                 result.put("note", "Shop is already bound to another account. Contact support if you believe this is an error.");
                 return result;
@@ -285,13 +300,15 @@ public class ShopifyAuthService {
                 result.put("shopDomain", shopDomain);
                 result.put("shopName", shopName);
                 result.put("authId", authId);
+                result.put("oauthFlow", resolveFlow(oauthState));
                 result.put("fulfillmentMounted", false);
                 result.put("note", e.getMessage());
                 return result;
             }
             throw e;
         }
-        log.info("Shop bound userId={} shopName={} autoProvision={}", boundUserId, shopName, autoProvision);
+        log.info("Shop bound userId={} shopName={} autoProvision={} flow={}",
+                boundUserId, shopName, autoProvision, resolveFlow(oauthState));
 
         // Fulfillment mount intentionally skipped in phase-2.
         try {
@@ -314,6 +331,7 @@ public class ShopifyAuthService {
         result.put("shopName", shopName);
         result.put("authId", authId);
         result.put("boundToUserId", boundUserId);
+        result.put("oauthFlow", resolveFlow(oauthState));
         result.put("fulfillmentMounted", false);
         result.put("note", "Auth saved. Webhooks registered (app/uninstalled, products/create|update|delete).");
         return result;
@@ -370,5 +388,22 @@ public class ShopifyAuthService {
 
     private static String toShopName(String shopDomain) {
         return StringUtils.removeEnd(shopDomain, ".myshopify.com");
+    }
+
+    /**
+     * Resolve post-OAuth redirect flow. Legacy rows without {@code flow} fall back by
+     * auto-provision sentinel (embedded/login historically shared it) → EMBEDDED;
+     * authenticated install → STANDALONE.
+     */
+    static String resolveFlow(UserOauthState state) {
+        if (state == null) {
+            return FLOW_STANDALONE;
+        }
+        if (StringUtils.isNotBlank(state.getFlow())) {
+            return state.getFlow().trim().toUpperCase();
+        }
+        boolean autoProvision = state.getUserId() == null
+                || state.getUserId() <= ShopifyMerchantProvisionService.AUTO_PROVISION_USER_ID;
+        return autoProvision ? FLOW_EMBEDDED : FLOW_STANDALONE;
     }
 }

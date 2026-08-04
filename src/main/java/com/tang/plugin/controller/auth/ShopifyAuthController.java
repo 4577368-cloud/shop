@@ -113,7 +113,7 @@ public class ShopifyAuthController {
     @GetMapping("/login")
     public ResponseEntity<Void> loginWithShopify(@RequestParam("shop") String shop,
                                                    @RequestParam(value = "return_to", required = false) String returnTo) {
-        String redirectUrl = shopifyAuthService.buildInstallUrlAutoProvision(shop);
+        String redirectUrl = shopifyAuthService.buildInstallUrlLogin(shop);
         String safeReturn = sanitizeReturnTo(returnTo);
         log.info("Shopify standalone login redirect shop={} returnTo={}", shop, safeReturn);
         return ResponseEntity.status(HttpStatus.FOUND)
@@ -163,12 +163,13 @@ public class ShopifyAuthController {
                             + "queryString=" + request.getQueryString());
         }
         Map<String, Object> result = shopifyAuthService.handleCallback(params);
-        // On success bounce back into the right host:
-        // - Embedded (Admin): return to admin.shopify.com/apps/{apiKey} so the merchant
-        //   continues inside Admin iframe (not a second standalone "install" tab).
-        // - Standalone: SPA /authorize with shop + status for localStorage restore.
+        // On success bounce back into the right host based on oauth flow persisted in state:
+        // - EMBEDDED (Admin): return to admin.shopify.com/apps/{apiKey}
+        // - LOGIN: frontend return_to + session cookies
+        // - STANDALONE: SPA /authorize with shop + status
         String shopDomain = String.valueOf(result.get("shopDomain"));
         String status = String.valueOf(result.getOrDefault("status", "OK"));
+        String oauthFlow = String.valueOf(result.getOrDefault("oauthFlow", ""));
         String base = StringUtils.removeEnd(
                 StringUtils.trimToEmpty(shopifyProperties.getFrontendBaseUrl()), "/");
         String host = params.get("host");
@@ -186,7 +187,8 @@ public class ShopifyAuthController {
             }
         }
 
-        boolean shopifyLogin = cookieEquals(request, LOGIN_FLOW_COOKIE, "1");
+        boolean shopifyLogin = ShopifyAuthService.FLOW_LOGIN.equalsIgnoreCase(oauthFlow)
+                || cookieEquals(request, LOGIN_FLOW_COOKIE, "1");
         String loginReturnTo = readCookie(request, LOGIN_RETURN_COOKIE);
         if (StringUtils.isNotBlank(loginReturnTo)) {
             loginReturnTo = URLDecoder.decode(loginReturnTo, StandardCharsets.UTF_8);
@@ -194,20 +196,21 @@ public class ShopifyAuthController {
         loginReturnTo = sanitizeReturnTo(loginReturnTo);
 
         String redirectUrl;
-        boolean backToAdmin = StringUtils.isNotBlank(host)
-                || "1".equals(embedded)
-                || "true".equalsIgnoreCase(embedded);
-        // Standalone Login with Shopify must not bounce into Admin even if a stale host remains.
-        if (shopifyLogin) {
-            backToAdmin = false;
+        // Prefer explicit flow from OAuth state — do not infer Admin from host alone
+        // (standalone Connect must return to source.tangbuy.cc even if a stale host cookie exists).
+        boolean backToAdmin = ShopifyAuthService.FLOW_EMBEDDED.equalsIgnoreCase(oauthFlow);
+        if (StringUtils.isBlank(oauthFlow) || "null".equalsIgnoreCase(oauthFlow)) {
+            // Legacy states without flow: host/cookie heuristics
+            backToAdmin = !shopifyLogin && (StringUtils.isNotBlank(host)
+                    || "1".equals(embedded)
+                    || "true".equalsIgnoreCase(embedded));
         }
         String apiKey = StringUtils.trimToEmpty(shopifyProperties.getApiKey());
         if (backToAdmin && StringUtils.isNotBlank(apiKey) && StringUtils.isNotBlank(shopDomain)) {
             String handle = shopDomain.toLowerCase(java.util.Locale.ROOT)
                     .replace(".myshopify.com", "");
             // Re-open inside Admin on workbench step 1 (authorize).
-            // Requires Partner App URL = https://ai.tangbuy.com (not .../en/install),
-            // so Admin appends /en/authorize under the app origin.
+            // Partner App URL should be the standalone frontend origin (source.tangbuy.cc).
             redirectUrl = "https://admin.shopify.com/store/" + handle
                     + "/apps/" + apiKey
                     + "/en/authorize";
@@ -221,8 +224,8 @@ public class ShopifyAuthController {
                     .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
             redirectUrl = redirect.toString();
         }
-        log.info("Shopify auth callback result status={} shopDomain={} backToAdmin={} shopifyLogin={}",
-                status, shopDomain, backToAdmin, shopifyLogin);
+        log.info("Shopify auth callback result status={} shopDomain={} flow={} backToAdmin={} shopifyLogin={}",
+                status, shopDomain, oauthFlow, backToAdmin, shopifyLogin);
         ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(redirectUrl))
                 .header(HttpHeaders.CACHE_CONTROL, "no-store");
