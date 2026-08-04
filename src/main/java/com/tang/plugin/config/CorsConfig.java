@@ -20,7 +20,7 @@ import java.util.List;
 @Configuration
 public class CorsConfig {
 
-    @Value("${tang.plugin.cors.allowed-origins:http://localhost:3000}")
+    @Value("${tang.plugin.cors.allowed-origins:https://tangbuy.cc,https://www.tangbuy.cc,http://localhost:3000,http://localhost:3001}")
     private List<String> allowedOrigins;
 
     @Bean

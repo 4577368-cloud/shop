@@ -62,15 +62,15 @@ docker --version
 
 ### 方式 A：从 GitHub 克隆（推荐）
 
-如果你的 `tangbuy-plugin` 已在 GitHub 仓库：
+如果你的 `tang-source-plugin` 已在 GitHub 仓库：
 
 ```bash
-mkdir -p /opt/tangbuy-plugin
-cd /opt/tangbuy-plugin
+mkdir -p /opt/tang-source-plugin
+cd /opt/tang-source-plugin
 git clone <你的GitHub仓库地址> /tmp/tb-repo
-# 将 tangbuy-plugin 子目录内容复制过来
-cp -r /tmp/tb-repo/tangbuy-plugin/* /opt/tangbuy-plugin/
-cp -r /tmp/tb-repo/tangbuy-plugin/.* /opt/tangbuy-plugin/ 2>/dev/null || true
+# 将 tang-source-plugin 子目录内容复制过来
+cp -r /tmp/tb-repo/tang-source-plugin/* /opt/tang-source-plugin/
+cp -r /tmp/tb-repo/tang-source-plugin/.* /opt/tang-source-plugin/ 2>/dev/null || true
 ```
 
 ### 方式 B：从本地 scp 上传
@@ -80,21 +80,21 @@ cp -r /tmp/tb-repo/tangbuy-plugin/.* /opt/tangbuy-plugin/ 2>/dev/null || true
 ```bash
 # 打包后端代码（排除不需要的文件）
 cd /Users/panda/Documents/shopify
-tar --exclude='tangbuy-plugin/target' \
-    --exclude='tangbuy-plugin/.git' \
-    --exclude='tangbuy-plugin/data' \
-    --exclude='tangbuy-plugin/deploy/.env' \
-    -czf /tmp/tangbuy-plugin.tar.gz tangbuy-plugin/
+tar --exclude='tang-source-plugin/target' \
+    --exclude='tang-source-plugin/.git' \
+    --exclude='tang-source-plugin/data' \
+    --exclude='tang-source-plugin/deploy/.env' \
+    -czf /tmp/tang-source-plugin.tar.gz tang-source-plugin/
 
 # 上传到 ECS（替换为你的 ECS 公网 IP）
-scp /tmp/tangbuy-plugin.tar.gz root@你的ECS_IP:/opt/
+scp /tmp/tang-source-plugin.tar.gz root@你的ECS_IP:/opt/
 
 # SSH 登录 ECS 解压
 ssh root@你的ECS_IP
-cd /opt && tar -xzf tangbuy-plugin.tar.gz
-mv tangbuy-plugin tangbuy-plugin-src
-mkdir -p /opt/tangbuy-plugin
-cp -r /opt/tangbuy-plugin-src/* /opt/tangbuy-plugin/
+cd /opt && tar -xzf tang-source-plugin.tar.gz
+mv tang-source-plugin tang-source-plugin-src
+mkdir -p /opt/tang-source-plugin
+cp -r /opt/tang-source-plugin-src/* /opt/tang-source-plugin/
 ```
 
 ---
@@ -102,7 +102,7 @@ cp -r /opt/tangbuy-plugin-src/* /opt/tangbuy-plugin/
 ## 第四步：配置环境变量
 
 ```bash
-cd /opt/tangbuy-plugin
+cd /opt/tang-source-plugin
 cp deploy/.env.example .env
 ```
 
@@ -138,7 +138,7 @@ vi .env
 ## 第五步：构建并启动
 
 ```bash
-cd /opt/tangbuy-plugin
+cd /opt/tang-source-plugin
 bash deploy/aliyun-deploy.sh
 ```
 
@@ -254,7 +254,7 @@ certbot renew --dry-run
 
 ### 10.4 证书到位后更新环境变量
 
-修改 `/opt/tangbuy-plugin/.env`：
+修改 `/opt/tang-source-plugin/.env`：
 ```bash
 TANG_PLUGIN_SHOPIFY_REDIRECT_URI=https://api.tangbuy.com/api/plugin/shopify/auth/callback
 TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL=https://api.tangbuy.com
@@ -263,7 +263,7 @@ TANG_PLUGIN_COOKIE_SECURE=true
 
 然后重启容器：
 ```bash
-cd /opt/tangbuy-plugin && bash deploy/aliyun-update.sh
+cd /opt/tang-source-plugin && bash deploy/aliyun-update.sh
 ```
 
 ### 10.5 更新 Vercel 和 Shopify
@@ -278,7 +278,7 @@ cd /opt/tangbuy-plugin && bash deploy/aliyun-update.sh
 每次后端代码更新后，在 ECS 上执行：
 
 ```bash
-cd /opt/tangbuy-plugin
+cd /opt/tang-source-plugin
 # 如果用 git 管理代码：
 git pull
 # 然后重新部署：
@@ -325,7 +325,7 @@ docker run -d \
 A: Render 免费版确实允许外部连接，但需确认使用的是 **External Host**（不是 Internal Host）。Internal Host 只在 Render 内网可用。
 
 ### Q: 容器启动但健康检查失败？
-A: 查看日志：`docker logs tangbuy-plugin`。常见原因：
+A: 查看日志：`docker logs tang-source-plugin`。常见原因：
 - 数据库密码错误 → 检查 .env 中 `SPRING_DATASOURCE_PASSWORD`
 - JWT_SECRET 缺失 → 必须设置 ≥32 字符的密钥
 - 端口被占用 → `netstat -tlnp | grep 8088` 检查

@@ -6,7 +6,7 @@ import lombok.experimental.Accessors;
 import java.time.Instant;
 
 /**
- * Active binding between an app_user and a Shopify shop.
+ * Active binding between a Tangbuy platform user and a Shopify shop.
  * Table: user_shop (junction; unbind = physical DELETE).
  */
 @Data

@@ -114,6 +114,31 @@ public class AppUserRepository {
         return user;
     }
 
+    public AppUser insertWithId(AppUser user) {
+        String sql = """
+                INSERT INTO app_user (id, email, password_hash, name, avatar_url, locale, timezone, currency,
+                                      ai_response_language, status, created_at, updated_at, del_flag)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """;
+        Instant now = Instant.now();
+        jdbcTemplate.update(sql,
+                user.getId(),
+                user.getEmail(),
+                user.getPasswordHash(),
+                user.getName(),
+                user.getAvatarUrl(),
+                user.getLocale() != null ? user.getLocale() : "zh",
+                user.getTimezone() != null ? user.getTimezone() : "Asia/Shanghai",
+                user.getCurrency() != null ? user.getCurrency() : "CNY",
+                user.getAiResponseLanguage() != null ? user.getAiResponseLanguage() : "zh",
+                user.getStatus() != null ? user.getStatus() : "active",
+                Timestamp.from(now),
+                Timestamp.from(now));
+        user.setCreatedAt(now);
+        user.setUpdatedAt(now);
+        return user;
+    }
+
     public void updatePasswordHash(Long id, String passwordHash) {
         jdbcTemplate.update(
                 "UPDATE app_user SET password_hash = ?, updated_at = ? WHERE id = ?",

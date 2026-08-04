@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -53,9 +54,11 @@ public class ShopifyAuthController {
      * Public endpoint — authenticity comes from the Shopify-signed session JWT itself.
      */
     @PostMapping("/session-token")
-    public ResponseEntity<Map<String, Object>> sessionToken(@RequestBody Map<String, String> body) {
+    public ResponseEntity<Map<String, Object>> sessionToken(@RequestBody Map<String, String> body,
+                                                            @RequestHeader(value = "X-Tangbuy-Token", required = false)
+                                                            String tangbuyToken) {
         String token = body == null ? null : body.get("sessionToken");
-        Map<String, Object> result = shopifySessionTokenService.exchange(token);
+        Map<String, Object> result = shopifySessionTokenService.exchange(token, tangbuyToken);
         if ("NEED_OAUTH".equals(String.valueOf(result.get("code")))) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(result);
         }

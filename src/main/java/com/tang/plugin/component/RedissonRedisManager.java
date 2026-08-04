@@ -36,7 +36,7 @@ import java.util.function.Supplier;
 @ConditionalOnBean(RedissonClient.class)
 public class RedissonRedisManager implements RedisManager {
 
-    public static final String REDIS_APP_PREFIX = "tangbuy-plugin";
+    public static final String REDIS_APP_PREFIX = "tang-source-plugin";
 
     private final RedissonClient redissonClient;
 
