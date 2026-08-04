@@ -23,6 +23,10 @@ public class ExternalOrder {
     private BigDecimal totalPrice;
     private String email;
     private String phone;
+    private String firstName;
+    private String lastName;
+    private String name;
+    private String company;
     private String countryCode;
     private Long countryId;
     private String provinceCode;

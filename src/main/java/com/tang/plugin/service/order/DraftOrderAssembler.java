@@ -21,6 +21,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -89,7 +90,10 @@ public class DraftOrderAssembler {
                 .setOrderId(orderId)
                 .setUserId(userId)
                 .setEmail(externalOrder.getEmail())
-                .setName(externalOrder.getEmail())
+                .setFirstName(externalOrder.getFirstName())
+                .setLastName(externalOrder.getLastName())
+                .setName(resolveDisplayName(externalOrder))
+                .setCompany(externalOrder.getCompany())
                 .setAddress1(externalOrder.getAddress1())
                 .setAddress2(externalOrder.getAddress2())
                 .setCity(externalOrder.getCity())
@@ -162,5 +166,74 @@ public class DraftOrderAssembler {
                 orderId, shopName, outerOrderId,
                 CollectionUtils.size(externalOrder.getLines()));
         return orderId;
+    }
+
+    /** Load shipping address for a draft order (first non-deleted row). */
+    public Optional<TDraftOrderAddressDO> findAddressByDraftOrderId(Long draftOrderId) {
+        if (draftOrderId == null) return Optional.empty();
+        return Optional.ofNullable(draftOrderAddressMapper.selectOne(
+                new LambdaQueryWrapper<TDraftOrderAddressDO>()
+                        .eq(TDraftOrderAddressDO::getOrderId, draftOrderId)
+                        .eq(TDraftOrderAddressDO::getDelFlag, 0)
+                        .last("LIMIT 1")));
+    }
+
+    /**
+     * Merchant supplement / correct shipping fields for international logistics.
+     * Creates a row when draft exists but address was never written.
+     */
+    public TDraftOrderAddressDO upsertAddressFields(Long draftOrderId, Long userId,
+                                                    TDraftOrderAddressDO patch) {
+        if (draftOrderId == null || patch == null) {
+            throw new IllegalArgumentException("draftOrderId and patch required");
+        }
+        TDraftOrderAddressDO existing = findAddressByDraftOrderId(draftOrderId).orElse(null);
+        Instant now = Instant.now();
+        if (existing == null) {
+            patch.setOrderId(draftOrderId)
+                    .setUserId(userId)
+                    .setDelFlag(0)
+                    .setCreateTime(now)
+                    .setUpdateTime(now);
+            if (StringUtils.isBlank(patch.getName())) {
+                patch.setName(resolveDisplayNameFromParts(
+                        patch.getFirstName(), patch.getLastName(), patch.getName(), patch.getEmail()));
+            }
+            draftOrderAddressMapper.insert(patch);
+            return patch;
+        }
+        if (patch.getEmail() != null) existing.setEmail(patch.getEmail());
+        if (patch.getFirstName() != null) existing.setFirstName(patch.getFirstName());
+        if (patch.getLastName() != null) existing.setLastName(patch.getLastName());
+        if (patch.getName() != null) existing.setName(patch.getName());
+        if (patch.getCompany() != null) existing.setCompany(patch.getCompany());
+        if (patch.getAddress1() != null) existing.setAddress1(patch.getAddress1());
+        if (patch.getAddress2() != null) existing.setAddress2(patch.getAddress2());
+        if (patch.getCity() != null) existing.setCity(patch.getCity());
+        if (patch.getZip() != null) existing.setZip(patch.getZip());
+        if (patch.getProvince() != null) existing.setProvince(patch.getProvince());
+        if (patch.getCountry() != null) existing.setCountry(patch.getCountry());
+        if (patch.getCountryCode() != null) existing.setCountryCode(patch.getCountryCode());
+        if (patch.getPhone() != null) existing.setPhone(patch.getPhone());
+        if (StringUtils.isBlank(existing.getName())) {
+            existing.setName(resolveDisplayNameFromParts(
+                    existing.getFirstName(), existing.getLastName(), existing.getName(), existing.getEmail()));
+        }
+        existing.setUpdateTime(now);
+        draftOrderAddressMapper.updateById(existing);
+        return existing;
+    }
+
+    private static String resolveDisplayName(ExternalOrder order) {
+        return resolveDisplayNameFromParts(
+                order.getFirstName(), order.getLastName(), order.getName(), order.getEmail());
+    }
+
+    private static String resolveDisplayNameFromParts(String first, String last, String name, String email) {
+        if (StringUtils.isNotBlank(name)) return name.trim();
+        String joined = StringUtils.trimToEmpty(first) + " " + StringUtils.trimToEmpty(last);
+        joined = joined.trim();
+        if (StringUtils.isNotBlank(joined)) return joined;
+        return StringUtils.trimToNull(email);
     }
 }

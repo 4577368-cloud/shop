@@ -14,4 +14,6 @@ import java.util.List;
 public class ShopOrderHeaderVO extends ThirdPlatformOrder {
     private Long draftOrderId;
     private List<ShopOrderLineItemVO> lineItems = new ArrayList<>();
+    /** Recipient / shipping address — omit from list UI; used by detail recipient panel. */
+    private ShopOrderShippingAddressVO shippingAddress;
 }

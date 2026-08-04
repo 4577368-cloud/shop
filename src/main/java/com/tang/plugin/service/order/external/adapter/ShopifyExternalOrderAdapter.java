@@ -72,6 +72,10 @@ public class ShopifyExternalOrderAdapter {
         if (shippingAddress == null) {
             return;
         }
+        order.setFirstName(shippingAddress.getString("firstName"));
+        order.setLastName(shippingAddress.getString("lastName"));
+        order.setName(shippingAddress.getString("name"));
+        order.setCompany(shippingAddress.getString("company"));
         order.setAddress1(shippingAddress.getString("address1"));
         order.setAddress2(shippingAddress.getString("address2"));
         order.setCity(shippingAddress.getString("city"));

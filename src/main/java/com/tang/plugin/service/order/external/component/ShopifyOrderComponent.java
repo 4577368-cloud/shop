@@ -42,6 +42,10 @@ public class ShopifyOrderComponent {
               }
             }
             shippingAddress {
+              firstName
+              lastName
+              name
+              company
               address1
               address2
               city
