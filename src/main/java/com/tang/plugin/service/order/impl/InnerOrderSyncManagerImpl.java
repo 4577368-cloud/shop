@@ -110,6 +110,7 @@ public class InnerOrderSyncManagerImpl implements InnerOrderSyncManager {
                     .set(TDraftOrderDO::getStatus, DraftOrderItemEnum.AWAITING_PAYMENT.getCode())
                     .set(TDraftOrderDO::getPayNo, res.getTradeNo())
                     .set(TDraftOrderDO::getTradeNo, res.getTradeNo())
+                    .set(TDraftOrderDO::getPackageNo, res.getOrderNo())
                     .set(TDraftOrderDO::getExpireTime, expire == null ? null : expire.toEpochMilli()));
 
             if (packageCreateInfo != null && packageCreateInfo.getLineId() != null) {

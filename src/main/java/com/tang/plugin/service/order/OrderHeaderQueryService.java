@@ -5,8 +5,11 @@ import com.tang.plugin.domain.dto.order.ShopOrderHeaderVO;
 import com.tang.plugin.domain.dto.order.ShopOrderLineItemVO;
 import com.tang.plugin.domain.dto.order.ShopOrderShippingAddressVO;
 import com.tang.plugin.domain.entity.order.TDraftOrderAddressDO;
+import com.tang.plugin.domain.entity.order.TDraftOrderDO;
 import com.tang.plugin.domain.entity.order.ThirdPlatformOrder;
 import com.tang.plugin.domain.entity.order.ThirdPlatformOrderLine;
+import com.tang.plugin.enums.order.OrderStatusTab;
+import com.tang.plugin.mapper.order.TDraftOrderMapper;
 import com.tang.plugin.repository.ThirdPlatformOrderLineRepository;
 import com.tang.plugin.repository.ThirdPlatformOrderRepository;
 import jakarta.annotation.Resource;
@@ -28,6 +31,8 @@ public class OrderHeaderQueryService {
     private ThirdPlatformOrderLineRepository thirdPlatformOrderLineRepository;
     @Resource
     private DraftOrderAssembler draftOrderAssembler;
+    @Resource
+    private TDraftOrderMapper draftOrderMapper;
 
     public Optional<ThirdPlatformOrder> findByOuterOrderId(String shopName, String outerOrderId) {
         if (StringUtils.isAnyBlank(shopName, outerOrderId)) {
@@ -105,6 +110,29 @@ public class OrderHeaderQueryService {
         if (h.getDraftOrderId() != null) {
             draftOrderAssembler.findAddressByDraftOrderId(h.getDraftOrderId())
                     .ifPresent(addr -> vo.setShippingAddress(toAddressVo(h.getDraftOrderId(), addr)));
+            TDraftOrderDO draft = draftOrderMapper.selectById(h.getDraftOrderId());
+            if (draft != null && (draft.getDelFlag() == null || draft.getDelFlag() == 0)) {
+                vo.setDraftStatus(draft.getStatus());
+                vo.setTradeNo(draft.getTradeNo());
+                vo.setTangbuyOrderNo(StringUtils.defaultIfBlank(draft.getPackageNo(), null));
+                Integer goodsStatus = vo.getGoodsStatus();
+                if (goodsStatus == null && StringUtils.isNotBlank(draft.getContent())) {
+                    try {
+                        goodsStatus = Integer.valueOf(draft.getContent().trim());
+                        vo.setGoodsStatus(goodsStatus);
+                    } catch (NumberFormatException ignored) {
+                        // content may hold other payloads
+                    }
+                }
+                OrderStatusTab tab = OrderStatusMapper.resolve(draft.getStatus(), goodsStatus);
+                if (tab != null) {
+                    vo.setOrderStatus(tab.getCode());
+                }
+                String ex = OrderStatusMapper.exceptionTagFromGoodsStatus(goodsStatus);
+                if (StringUtils.isNotBlank(ex)) {
+                    vo.setExceptionTag(ex);
+                }
+            }
         }
         return vo;
     }

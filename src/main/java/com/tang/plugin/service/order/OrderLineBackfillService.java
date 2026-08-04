@@ -28,6 +28,8 @@ public class OrderLineBackfillService {
     private ProductBindingQueryService productBindingQueryService;
     @Resource
     private TxManger txManger;
+    @Resource
+    private DraftOrderBindingSyncService draftOrderBindingSyncService;
 
     /**
      * Backfill one persisted order line by its stable lineId.
@@ -67,6 +69,9 @@ public class OrderLineBackfillService {
         log.info("Backfill by line done shopName={} variantGid={} lineId={} outerOrderId={} "
                         + "tangbuySkuId={} backfilled={}",
                 shopName, variantGid, lineId, line.getOuterOrderId(), binding.getTangbuySkuId(), rows);
+        if (rows > 0 && StringUtils.isNotBlank(line.getOuterOrderId())) {
+            draftOrderBindingSyncService.syncOrder(shopName, line.getOuterOrderId());
+        }
         return result;
     }
 
@@ -96,6 +101,9 @@ public class OrderLineBackfillService {
         log.info("Backfill by variant done shopName={} variantGid={} tangbuySkuId={} matched={} "
                         + "backfilled={} skippedAlreadyBound={}",
                 shopName, variantGid, binding.getTangbuySkuId(), matched, backfilled, skippedAlreadyBound);
+        if (backfilled > 0) {
+            draftOrderBindingSyncService.syncShopBoundLines(shopName);
+        }
         return result;
     }
 

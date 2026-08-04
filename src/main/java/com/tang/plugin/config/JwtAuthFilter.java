@@ -72,6 +72,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             // both authenticated and ownership-checked.
             "/api/plugin/match/",
             "/api/plugin/order/",
+            "/api/plugin/draft/",
+            "/api/plugin/pay/",
             "/api/plugin/pricing/",
             "/api/plugin/logistics/",
             "/api/plugin/catalog/",
@@ -93,7 +95,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             "/api/plugin/shopify/webhooks/compliance",
             "/api/plugin/shopify/auth/session-token",
             "/api/plugin/shopify/auth/install-embedded",
-            "/api/plugin/shopify/auth/login"
+            "/api/plugin/shopify/auth/login",
+            "/payCb",
+            "/api/plugin/pay/payCb"
     );
 
     @Resource

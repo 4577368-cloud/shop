@@ -30,6 +30,8 @@ import com.tang.plugin.mapper.order.TOrderLinePurchaseMapper;
 import com.tang.plugin.mapper.order.TOrderLineRefundItemMapper;
 import com.tang.plugin.mapper.order.TPackageLogisticsTrackMapper;
 import com.tang.plugin.mq.ProducerUtils;
+import com.tang.plugin.service.order.DraftOrderAssembler;
+import com.tang.plugin.service.order.DraftOrderBindingSyncService;
 import com.tang.plugin.service.order.DraftOrderManager;
 import com.tang.plugin.service.order.DraftOrderPackageAmountManager;
 import com.tang.plugin.service.order.InnerOrderSyncManager;
@@ -62,6 +64,8 @@ public class DraftOrderManagerImpl implements DraftOrderManager {
     @Resource private DraftOrderPackageAmountManager packageAmountManager;
     @Resource private RedisManager redisManager;
     @Resource private ProducerUtils producerUtils;
+    @Resource private DraftOrderBindingSyncService draftOrderBindingSyncService;
+    @Resource private DraftOrderAssembler draftOrderAssembler;
 
     @Override
     public CreateDraftOrderPurchaseVO purchaseOrder(Long userId, DraftOrderPurchaseReq req) {
@@ -103,6 +107,27 @@ public class DraftOrderManagerImpl implements DraftOrderManager {
                         .setType("dropship")
                         .setPayableAmountCny(fresh.getPurchaseAmount())
                         .setLineNos(listItemNos(fresh.getId()));
+            }
+
+            // Ensure late SKU bindings are written onto draft lines / purchase rows
+            if (StringUtils.isNotBlank(order.getShopName()) && StringUtils.isNotBlank(order.getOuterOrderId())) {
+                draftOrderBindingSyncService.syncOrder(order.getShopName(), order.getOuterOrderId());
+            }
+
+            var addr = draftOrderAssembler.findAddressByDraftOrderId(order.getId());
+            if (addr.isEmpty() || StringUtils.isAnyBlank(
+                    StringUtils.defaultIfBlank(addr.get().getName(),
+                            (StringUtils.trimToEmpty(addr.get().getFirstName()) + " "
+                                    + StringUtils.trimToEmpty(addr.get().getLastName())).trim()),
+                    addr.get().getAddress1(),
+                    addr.get().getCity(),
+                    StringUtils.defaultIfBlank(addr.get().getCountryCode(), addr.get().getCountry()),
+                    addr.get().getPhone())) {
+                throw new CustomException("shipping address incomplete");
+            }
+
+            if (req.getPackageCreateInfo() == null || req.getPackageCreateInfo().getLineId() == null) {
+                throw new CustomException("packageCreateInfo.lineId required");
             }
 
             List<TDraftOrderLineDO> lines = draftOrderLineMapper.selectList(
