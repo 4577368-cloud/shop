@@ -11,8 +11,8 @@ import java.util.List;
 public class LogisticsTemplateVO {
     private String shopName;
     private String packaging;
-    private String speedPreference;
     private List<MarketSelectionDTO> markets = new ArrayList<>();
+    private LogisticsDeclareConfigDTO declareConfig;
     /** True when no row is stored yet — VO is an in-memory default. */
     private boolean defaultTemplate;
     private String updatedAt;

@@ -2,6 +2,7 @@ package com.tang.plugin.service.logistics;
 
 import com.alibaba.fastjson2.JSON;
 import com.tang.common.core.exception.CustomException;
+import com.tang.plugin.domain.dto.logistics.LogisticsDeclareConfigDTO;
 import com.tang.plugin.domain.dto.logistics.LogisticsTemplateUpsertRequest;
 import com.tang.plugin.domain.dto.logistics.LogisticsTemplateVO;
 import com.tang.plugin.domain.dto.logistics.MarketSelectionDTO;
@@ -14,25 +15,29 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * One logistics strategy template per shop. Defaults are in-memory until the merchant saves.
- * Lane matching consumes this template in Phase 2.
+ * Declare/tax fields align with tang-plugin LogisticsTemplateConfigVO (lite subset).
  */
 @Slf4j
 @Service
 public class LogisticsTemplateService {
 
     private static final String DEFAULT_PACKAGING = PackagingType.MINIMAL.name();
-    private static final String DEFAULT_SPEED = SpeedPreference.BALANCED.name();
-    /** Default market: North America / United States — honest starter, not a fake “history match”. */
+    /** Legacy column only — speed preference is no longer part of the product API. */
+    private static final String LEGACY_SPEED = SpeedPreference.BALANCED.name();
     private static final String DEFAULT_MARKETS_JSON =
             "[{\"marketGroupId\":\"north_america\",\"countryCodes\":[\"US\"]}]";
+    private static final Set<Integer> ALLOWED_REGISTRATION = Set.of(0, 3, 4);
+    private static final int MIN_FUZZY_RATIO = 40;
 
     @Resource
     private LogisticsTemplateRepository logisticsTemplateRepository;
@@ -51,16 +56,17 @@ public class LogisticsTemplateService {
             throw new CustomException("logistics template requires shopName");
         }
         String packaging = normalizeEnum(request.getPackaging(), PackagingType.class, DEFAULT_PACKAGING);
-        String speed = normalizeEnum(request.getSpeedPreference(), SpeedPreference.class, DEFAULT_SPEED);
         String marketsJson = encodeMarkets(request.getMarkets());
+        LogisticsDeclareConfigDTO declare = normalizeDeclare(request.getDeclareConfig());
 
         LogisticsTemplate saved = logisticsTemplateRepository.upsert(new LogisticsTemplate()
                 .setShopName(request.getShopName().trim())
                 .setPackaging(packaging)
-                .setSpeedPreference(speed)
-                .setMarketsJson(marketsJson));
-        log.info("Logistics template upserted shopName={} packaging={} speed={} markets={}",
-                saved.getShopName(), packaging, speed, marketsJson);
+                .setSpeedPreference(LEGACY_SPEED)
+                .setMarketsJson(marketsJson)
+                .setDeclareJson(JSON.toJSONString(declare)));
+        log.info("Logistics template upserted shopName={} packaging={} markets={} declare={}",
+                saved.getShopName(), packaging, marketsJson, saved.getDeclareJson());
         return toVo(saved, false);
     }
 
@@ -68,8 +74,8 @@ public class LogisticsTemplateService {
         return new LogisticsTemplateVO()
                 .setShopName(shopName)
                 .setPackaging(DEFAULT_PACKAGING)
-                .setSpeedPreference(DEFAULT_SPEED)
                 .setMarkets(decodeMarkets(DEFAULT_MARKETS_JSON))
+                .setDeclareConfig(defaultDeclare())
                 .setDefaultTemplate(true)
                 .setUpdatedAt(null);
     }
@@ -78,11 +84,67 @@ public class LogisticsTemplateService {
         return new LogisticsTemplateVO()
                 .setShopName(row.getShopName())
                 .setPackaging(row.getPackaging())
-                .setSpeedPreference(row.getSpeedPreference())
                 .setMarkets(decodeMarkets(row.getMarketsJson()))
+                .setDeclareConfig(decodeDeclare(row.getDeclareJson()))
                 .setDefaultTemplate(isDefault)
                 .setUpdatedAt(row.getUpdatedAt() == null ? null
                         : DateTimeFormatter.ISO_INSTANT.format(row.getUpdatedAt().atOffset(ZoneOffset.UTC)));
+    }
+
+    private static LogisticsDeclareConfigDTO defaultDeclare() {
+        return new LogisticsDeclareConfigDTO()
+                .setDeclareMode(0)
+                .setRegistrationType(0)
+                .setDeclareCurrency("USD")
+                .setFuzzyRatio(MIN_FUZZY_RATIO)
+                .setTax(null)
+                .setTaxNo(null);
+    }
+
+    private static LogisticsDeclareConfigDTO normalizeDeclare(LogisticsDeclareConfigDTO raw) {
+        LogisticsDeclareConfigDTO d = raw == null ? defaultDeclare() : raw;
+        int mode = d.getDeclareMode() == null ? 0 : d.getDeclareMode();
+        if (mode != 0 && mode != 1) {
+            throw new CustomException("invalid declareMode: " + mode);
+        }
+        int reg = d.getRegistrationType() == null ? 0 : d.getRegistrationType();
+        if (!ALLOWED_REGISTRATION.contains(reg)) {
+            throw new CustomException("invalid registrationType: " + reg);
+        }
+        String currency = StringUtils.defaultIfBlank(d.getDeclareCurrency(), "USD")
+                .trim().toUpperCase(Locale.ROOT);
+        int fuzzy = d.getFuzzyRatio() == null ? MIN_FUZZY_RATIO : d.getFuzzyRatio();
+        if (fuzzy < MIN_FUZZY_RATIO) {
+            throw new CustomException("fuzzyRatio must be >= " + MIN_FUZZY_RATIO);
+        }
+        String taxNo = StringUtils.trimToNull(d.getTaxNo());
+        if (reg == 4 && StringUtils.isBlank(taxNo)) {
+            throw new CustomException("taxNo required for personal IOSS");
+        }
+        BigDecimal tax = d.getTax();
+        if (tax != null && tax.compareTo(BigDecimal.ZERO) < 0) {
+            throw new CustomException("tax must be >= 0");
+        }
+        return new LogisticsDeclareConfigDTO()
+                .setDeclareMode(mode)
+                .setRegistrationType(reg)
+                .setDeclareCurrency(currency)
+                .setFuzzyRatio(fuzzy)
+                .setTax(tax)
+                .setTaxNo(reg == 4 ? taxNo : null);
+    }
+
+    private static LogisticsDeclareConfigDTO decodeDeclare(String json) {
+        if (StringUtils.isBlank(json)) {
+            return defaultDeclare();
+        }
+        try {
+            LogisticsDeclareConfigDTO parsed = JSON.parseObject(json, LogisticsDeclareConfigDTO.class);
+            return parsed == null ? defaultDeclare() : normalizeDeclare(parsed);
+        } catch (Exception e) {
+            log.warn("Invalid declare_json on logistics_template, using defaults: {}", e.getMessage());
+            return defaultDeclare();
+        }
     }
 
     private static String encodeMarkets(List<MarketSelectionDTO> markets) {

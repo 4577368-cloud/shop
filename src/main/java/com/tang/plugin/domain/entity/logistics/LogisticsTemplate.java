@@ -11,9 +11,18 @@ public class LogisticsTemplate {
     private Long id;
     private String shopName;
     private String packaging;
+    /**
+     * Legacy DB column — no longer exposed on the API. Kept for backward-compatible rows.
+     * Writes always persist BALANCED.
+     */
     private String speedPreference;
     /** JSON array of {marketGroupId, countryCodes:[]} */
     private String marketsJson;
+    /**
+     * JSON object matching LogisticsDeclareConfigDTO
+     * (declareMode / registrationType / declareCurrency / tax / fuzzyRatio / taxNo).
+     */
+    private String declareJson;
     private Integer delFlag;
     private Instant createdAt;
     private Instant updatedAt;

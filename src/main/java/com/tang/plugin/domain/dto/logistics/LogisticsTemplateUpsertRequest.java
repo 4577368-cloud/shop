@@ -11,6 +11,6 @@ import java.util.List;
 public class LogisticsTemplateUpsertRequest {
     private String shopName;
     private String packaging;
-    private String speedPreference;
     private List<MarketSelectionDTO> markets = new ArrayList<>();
+    private LogisticsDeclareConfigDTO declareConfig;
 }

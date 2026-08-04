@@ -8,4 +8,5 @@ public class OrderPackageQueryFormReq {
     private Integer declareMode = 0;
     private Integer registrationType = 0;
     private Integer tax = 0;
+    private String taxNo;
 }
