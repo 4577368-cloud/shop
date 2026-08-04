@@ -1,0 +1,16 @@
+---
+description: Never commit tang-source-plugin src/main/resources
+alwaysApply: true
+---
+
+# Do not commit plugin `src/main/resources`
+
+Never stage, commit, or push changes under:
+
+- `tang-source-plugin/src/main/resources/**`
+- `../shopify/tangbuy-plugin/src/main/resources/**` (local clone path)
+- any path matching `**/tangbuy-plugin/src/main/resources/**` or `**/tang-source-plugin/src/main/resources/**`
+
+These files are environment/deploy config (Nacos, `application*.yml`, `schema.sql`, catalogs, etc.) and must stay out of git commits from agent work.
+
+If a task requires editing them locally for debugging, keep changes unstaged and warn the user; do not include them in `git add` / commit.
