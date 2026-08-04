@@ -46,7 +46,7 @@ public class JwtService {
 
     // ===== Access Token (JWT) =====
 
-    private static final String ISSUER = "tangbuy-plugin";
+    private static final String ISSUER = "tang-source-plugin";
     private static final String AUDIENCE = "tangbuy-frontend";
 
     /** Generate a signed JWT access token (standalone login — no shop claim). */
@@ -116,6 +116,55 @@ public class JwtService {
     }
 
     public record AccessTokenClaims(Long userId, String shopName, String shopDomain) {}
+
+    public String generatePluginToken(Long userId, String userName, String pluginType,
+                                      String shopName, String shopId, long ttlSeconds) {
+        Instant now = Instant.now();
+        Instant exp = now.plusSeconds(ttlSeconds);
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .issuer(ISSUER)
+                .audience().add(AUDIENCE).and()
+                .claim("typ", "plugin")
+                .claim("userName", userName)
+                .claim("pluginType", pluginType)
+                .claim("shopName", shopName)
+                .claim("shopId", shopId)
+                .id(java.util.UUID.randomUUID().toString())
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(exp))
+                .signWith(accessKey)
+                .compact();
+    }
+
+    public PluginTokenClaims parsePluginToken(String token) {
+        if (StringUtils.isBlank(token)) {
+            return null;
+        }
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(accessKey)
+                    .requireIssuer(ISSUER)
+                    .requireAudience(AUDIENCE)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+            if (!"plugin".equals(claims.get("typ", String.class))) {
+                return null;
+            }
+            return new PluginTokenClaims(
+                    Long.parseLong(claims.getSubject()),
+                    claims.get("userName", String.class),
+                    claims.get("pluginType", String.class),
+                    claims.get("shopName", String.class),
+                    claims.get("shopId", String.class));
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public record PluginTokenClaims(Long userId, String userName, String pluginType,
+                                    String shopName, String shopId) {}
 
     // ===== Refresh Token (opaque random) =====
 

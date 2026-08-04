@@ -11,10 +11,10 @@ spring:
         enabled: false
   datasource:
     # Prefer an explicit JDBC URL; otherwise build it from Render-provided DB parts.
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}
-    driver-class-name: org.postgresql.Driver
-    username: ${SPRING_DATASOURCE_USERNAME}
-    password: ${SPRING_DATASOURCE_PASSWORD}
+    url: ${AGENT_DB_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST}:${DB_PORT:5432}/${DB_NAME}}}
+    driver-class-name: ${AGENT_DB_DRIVER:org.postgresql.Driver}
+    username: ${AGENT_DB_USERNAME:${SPRING_DATASOURCE_USERNAME}}
+    password: ${AGENT_DB_PASSWORD:${SPRING_DATASOURCE_PASSWORD}}
     hikari:
       maximum-pool-size: 3
       minimum-idle: 1

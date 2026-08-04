@@ -36,7 +36,7 @@ public class SkeletonHealthController {
     @GetMapping("/health")
     public Map<String, Object> health() {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("app", "tangbuy-plugin");
+        body.put("app", "tang-source-plugin");
         body.put("status", "UP");
         body.put("supportedPluginTypes", PluginType.values());
         try {

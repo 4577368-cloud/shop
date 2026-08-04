@@ -29,10 +29,10 @@ sa-token:
 
 spring:
   application:
-    name: tangbuy-plugin
+    name: tang-source-plugin
   datasource:
     # Local default: file H2. On Render, override with SPRING_DATASOURCE_URL (see render.yaml).
-    url: jdbc:h2:file:./data/tangbuy-plugin;MODE=MySQL;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:file:./data/tang-source-plugin;MODE=MySQL;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -51,6 +51,8 @@ server:
 
 tang:
   plugin:
+    cors:
+      allowed-origins: ${TANG_PLUGIN_CORS_ALLOWED_ORIGINS:https://tangbuy.cc,https://www.tangbuy.cc,http://localhost:3000,http://localhost:3001}
     lock:
       enabled: false
     redis:
@@ -65,11 +67,11 @@ tang:
     exchange-rate:
       default: 1.0
     shopify:
-      api-version: "2025-01"
+      api-version: "2026-07"
       # Prefer env on Render: TANG_PLUGIN_SHOPIFY_API_KEY / _API_SECRET / ...
       api-key: ${TANG_PLUGIN_SHOPIFY_API_KEY:}
       api-secret: ${TANG_PLUGIN_SHOPIFY_API_SECRET:}
-      scopes: ${TANG_PLUGIN_SHOPIFY_SCOPES:read_products,write_products}
+      scopes: ${TANG_PLUGIN_SHOPIFY_SCOPES:write_orders,read_orders,write_fulfillments,read_fulfillments,write_shipping,read_shipping,write_products,read_products,write_merchant_managed_fulfillment_orders,read_merchant_managed_fulfillment_orders,read_customer_events,write_marketing_events,read_marketing_events,write_customers,read_customers,read_inventory,write_inventory,read_assigned_fulfillment_orders,write_locations,read_locations,write_assigned_fulfillment_orders}
       redirect-uri: ${TANG_PLUGIN_SHOPIFY_REDIRECT_URI:http://localhost:8088/api/plugin/shopify/auth/callback}
       webhook-base-url: ${TANG_PLUGIN_SHOPIFY_WEBHOOK_BASE_URL:http://localhost:8088}
       # Frontend base for post-OAuth redirect (set to the deployed frontend URL on Render).
@@ -110,6 +112,9 @@ tang:
     tangbuy-admin:
       base-url: ${TANG_PLUGIN_TANGBUY_ADMIN_BASE_URL:https://admin.tangbuy.cc/prod-api}
       token: ${TANG_PLUGIN_TANGBUY_ADMIN_TOKEN:}
+    platform:
+      gateway-base-url: ${TANG_PLUGIN_PLATFORM_GATEWAY_BASE_URL:https://tangbuy.cc/gateway}
+      shopify-login-token: ${TANG_PLUGIN_PLATFORM_SHOPIFY_LOGIN_TOKEN:tang-source-plugin-shopify}
     # User auth (P1): JWT signing + cookie config
     auth:
       jwt:

@@ -1,4 +1,4 @@
-# tangbuy-plugin
+# tang-source-plugin
 
 TangBuy 的 **平台接入服务**（Shopify 等电商平台的插件式对接），不是整个产品唯一后端。
 
@@ -50,7 +50,7 @@ TangBuy 的 **平台接入服务**（Shopify 等电商平台的插件式对接�
 
 ## 采购链路（Procurement）
 
-tangbuy-plugin 只承担平台接入侧的采购**任务交接与消费接入**，不做真实采购执行、供应商下单、物流回传。
+tang-source-plugin 只承担平台接入侧的采购**任务交接与消费接入**，不做真实采购执行、供应商下单、物流回传。
 
 ### 能力清单
 
@@ -125,7 +125,7 @@ tangbuy-plugin 只承担平台接入侧的采购**任务交接与消费接入**�
 
 | 环境 | Profile | 数据源 |
 |---|---|---|
-| 本地默认 | （无） | 文件 H2 `./data/tangbuy-plugin`（现状不变） |
+| 本地默认 | （无） | 文件 H2 `./data/tang-source-plugin`（现状不变） |
 | 测试 | `test` | 内存 H2（现状不变） |
 | 生产 / Render | `prod` | **PostgreSQL（持久）** |
 
@@ -143,7 +143,7 @@ tangbuy-plugin 只承担平台接入侧的采购**任务交接与消费接入**�
 需要 **JDK 17+** 与 Maven：
 
 ```bash
-cd /Users/panda/Documents/shopify/tangbuy-plugin
+cd /Users/panda/Documents/shopify/tang-source-plugin
 mvn spring-boot:run
 ```
 
@@ -155,19 +155,19 @@ curl http://localhost:8088/api/plugin/health
 
 ## 部署到 Render（GitHub）
 
-本目录已含 `Dockerfile`、`render.yaml`。建议把 **`tangbuy-plugin` 单独作为 GitHub 仓库根目录**推送（不要把整个前端 monorepo 当根）。
+本目录已含 `Dockerfile`、`render.yaml`。建议把 **`tang-source-plugin` 单独作为 GitHub 仓库根目录**推送（不要把整个前端 monorepo 当根）。
 
 ### 1. 创建 GitHub 仓库并推送
 
-在 `tangbuy-plugin` 目录：
+在 `tang-source-plugin` 目录：
 
 ```bash
-cd /Users/panda/Documents/shopify/tangbuy-plugin
+cd /Users/panda/Documents/shopify/tang-source-plugin
 git init
 git add .
-git commit -m "Initial tangbuy-plugin for Render"
+git commit -m "Initial tang-source-plugin for Render"
 # 在 GitHub 新建空仓库后：
-git remote add origin git@github.com:<你的账号>/tangbuy-plugin.git
+git remote add origin git@github.com:<你的账号>/tang-source-plugin.git
 git branch -M main
 git push -u origin main
 ```

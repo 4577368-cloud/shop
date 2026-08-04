@@ -2,14 +2,12 @@ package com.tang.plugin.service.user;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
-import com.tang.plugin.config.JwtAuthProperties;
 import com.tang.plugin.config.ShopifyProperties;
-import com.tang.plugin.domain.entity.user.AppUser;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
-import com.tang.plugin.domain.entity.user.UserShop;
-import com.tang.plugin.repository.AppUserRepository;
 import com.tang.plugin.repository.UserShopRepository;
-import com.tang.plugin.service.auth.JwtService;
+import com.tang.plugin.service.auth.PlatformTokenService;
+import com.tang.plugin.service.auth.ShopifyPlatformLoginService;
+import com.tang.plugin.client.user.dto.Oauth2TokenResponse;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
 import com.tang.plugin.service.order.external.component.ShopifyAuthComponent;
 import io.jsonwebtoken.Claims;
@@ -49,19 +47,21 @@ public class ShopifySessionTokenService {
     @Resource
     private UserShopRepository userShopRepository;
     @Resource
-    private AppUserRepository appUserRepository;
-    @Resource
-    private JwtService jwtService;
-    @Resource
-    private JwtAuthProperties jwtAuthProperties;
-    @Resource
     private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ShopifyMerchantProvisionService merchantProvisionService;
     @Resource
     private ShopifyAuthComponent shopifyAuthComponent;
+    @Resource
+    private PlatformTokenService platformTokenService;
+    @Resource
+    private ShopifyPlatformLoginService shopifyPlatformLoginService;
 
     public Map<String, Object> exchange(String sessionToken) {
+        return exchange(sessionToken, null);
+    }
+
+    public Map<String, Object> exchange(String sessionToken, String tangbuyToken) {
         if (StringUtils.isBlank(sessionToken)) {
             throw new CustomException("sessionToken is required", 400, "MISSING_SESSION_TOKEN");
         }
@@ -80,52 +80,85 @@ public class ShopifySessionTokenService {
         String shopName = toShopName(shopDomain);
 
         Long userId;
-        Optional<UserShop> binding = userShopRepository.findByShopName(shopName);
-        if (binding.isPresent()) {
-            userId = binding.get().getUserId();
-            // Binding without offline token (Shopify list shows installed, our DB incomplete).
+        String email = null;
+        Oauth2TokenResponse platformToken = null;
+        String responseAccessToken = null;
+        PlatformTokenService.PlatformUser platformUser = platformTokenService.verify(stripBearer(tangbuyToken));
+        if (platformUser != null && platformUser.getUserId() != null) {
+            userId = platformUser.getUserId();
+            email = platformUser.getEmail();
+            responseAccessToken = stripBearer(tangbuyToken);
             if (shopifyStoreAuthService.findActiveByShopDomain(shopDomain).isEmpty()) {
                 tryAcquireOfflineViaSessionToken(shopName, shopDomain, rawSession);
             }
+            userShopRepository.updateOwnerByShopName(userId, shopName, shopDomain);
+            if (userShopRepository.findByShopName(shopName).isEmpty()) {
+                userShopRepository.upsertBinding(userId, shopName, shopDomain);
+            }
         } else {
             Optional<ShopifyStoreAuth> auth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain);
-            if (auth.isEmpty()) {
-                // App is already open in Admin ⇒ installed on Shopify. Prefer token exchange
-                // over a top-level OAuth breakout (which often fails in the sandboxed iframe).
-                boolean acquired = tryAcquireOfflineViaSessionToken(shopName, shopDomain, rawSession);
-                if (!acquired) {
-                    log.info("Session token exchange: NEED_OAUTH shopName={}", shopName);
-                    Map<String, Object> need = new LinkedHashMap<>();
-                    need.put("status", "ERROR");
-                    need.put("code", "NEED_OAUTH");
-                    need.put("message",
-                            "Shop is installed on Shopify but not linked yet. Complete Connect once.");
-                    need.put("shopDomain", shopDomain);
-                    need.put("shopName", shopName);
-                    need.put("shopifyInstalled", true);
-                    need.put("installPath", "/api/plugin/shopify/auth/install-embedded?shop="
-                            + java.net.URLEncoder.encode(shopDomain, java.nio.charset.StandardCharsets.UTF_8));
-                    return need;
-                }
+            if (auth.isEmpty() && !tryAcquireOfflineViaSessionToken(shopName, shopDomain, rawSession)) {
+                log.info("Session token exchange: NEED_OAUTH shopName={}", shopName);
+                Map<String, Object> need = new LinkedHashMap<>();
+                need.put("status", "ERROR");
+                need.put("code", "NEED_OAUTH");
+                need.put("message",
+                        "Shop is installed on Shopify but not linked yet. Complete Connect once.");
+                need.put("shopDomain", shopDomain);
+                need.put("shopName", shopName);
+                need.put("shopifyInstalled", true);
+                need.put("installPath", "/api/plugin/shopify/auth/install-embedded?shop="
+                        + java.net.URLEncoder.encode(shopDomain, java.nio.charset.StandardCharsets.UTF_8));
+                return need;
             }
-            userId = merchantProvisionService.ensureUserBoundToShop(shopName, shopDomain);
+            ShopifyStoreAuth activeAuth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain)
+                    .or(() -> shopifyStoreAuthService.findActiveByShopName(shopName))
+                    .orElseThrow(() -> new CustomException("Shop is not authorized yet", 409, "NEED_OAUTH"));
+            ShopifyMerchantProvisionService.ShopProfile profile =
+                    merchantProvisionService.fetchShopProfile(shopName, shopDomain, activeAuth.getAccessToken());
+            platformToken = shopifyPlatformLoginService.login(shopName, profile.email(), profile.name());
+            userId = parseUserId(platformToken);
+            email = profile.email();
+            userShopRepository.updateOwnerByShopName(userId, shopName, shopDomain);
+            if (userShopRepository.findByShopName(shopName).isEmpty()) {
+                userShopRepository.upsertBinding(userId, shopName, shopDomain);
+            }
+            responseAccessToken = platformToken.getToken();
         }
 
-        AppUser user = appUserRepository.findById(userId)
-                .orElseThrow(() -> new CustomException("User not found", 401, "UNAUTHENTICATED"));
-
-        String accessToken = jwtService.generateAccessToken(userId, user.getEmail(), shopName, shopDomain);
-        long expiresIn = jwtAuthProperties.getJwt().getAccessTtlSeconds();
+        if (StringUtils.isBlank(responseAccessToken)) {
+            throw new CustomException("Platform token missing", 401, "UNAUTHENTICATED");
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("status", "OK");
-        out.put("accessToken", accessToken);
-        out.put("expiresIn", expiresIn);
+        out.put("accessToken", responseAccessToken);
+        if (platformToken != null) {
+            out.put("refreshToken", platformToken.getRefreshToken());
+            out.put("tokenHead", platformToken.getTokenHead());
+            out.put("expiresIn", platformToken.getExpiresIn());
+        }
         out.put("shopName", shopName);
         out.put("shopDomain", shopDomain);
         out.put("userId", userId);
-        out.put("email", user.getEmail());
+        out.put("email", email);
         return out;
+    }
+
+    private Long parseUserId(Oauth2TokenResponse token) {
+        if (token == null || StringUtils.isBlank(token.getUuid())) {
+            throw new CustomException("Platform token user missing", 401, "UNAUTHENTICATED");
+        }
+        try {
+            return Long.valueOf(token.getUuid());
+        } catch (NumberFormatException e) {
+            throw new CustomException("Platform token user invalid", 401, "UNAUTHENTICATED");
+        }
+    }
+
+    private static String stripBearer(String token) {
+        if (StringUtils.isBlank(token)) return null;
+        return token.trim().replaceFirst("(?i)^Bearer\\s+", "");
     }
 
     /**

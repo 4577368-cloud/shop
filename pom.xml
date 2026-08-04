@@ -18,10 +18,10 @@
     </parent>
 
     <groupId>com.tang</groupId>
-    <artifactId>tangbuy-plugin</artifactId>
+    <artifactId>tang-source-plugin</artifactId>
     <version>0.1.0-SNAPSHOT</version>
-    <name>tangbuy-plugin</name>
-    <description>TangBuy lightweight Shopify plugin (draft-order / dropship)</description>
+    <name>tang-source-plugin</name>
+    <description>TangBuy source platform plugin (Shopify/WooCommerce + draft-order / dropship)</description>
 
     <properties>
         <java.version>17</java.version>

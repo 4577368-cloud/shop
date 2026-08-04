@@ -13,11 +13,17 @@ import java.util.List;
 public class ShopifyProperties {
 
     /** Admin API version segment, e.g. 2025-01 */
-    private String apiVersion = "2025-01";
+    private String apiVersion = "2026-07";
 
-    private String apiKey = "";
-    private String apiSecret = "";
-    private String scopes = "read_products,write_products";
+    private String apiKey;
+    private String apiSecret;
+    private String scopes = "write_orders,read_orders,write_fulfillments,read_fulfillments," +
+            "write_shipping,read_shipping,write_products,read_products," +
+            "write_merchant_managed_fulfillment_orders,read_merchant_managed_fulfillment_orders," +
+            "read_customer_events,write_marketing_events,read_marketing_events," +
+            "write_customers,read_customers,read_inventory,write_inventory," +
+            "read_assigned_fulfillment_orders,write_locations,read_locations," +
+            "write_assigned_fulfillment_orders";
     /** OAuth callback, e.g. https://host/api/plugin/shopify/auth/callback */
     private String redirectUri = "http://localhost:8088/api/plugin/shopify/auth/callback";
     /** Public base for webhook callback, e.g. https://host */

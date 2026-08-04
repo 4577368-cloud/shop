@@ -1,4 +1,4 @@
-# Render Blueprint — connect this repo (tangbuy-plugin as root) then "Apply"
+# Render Blueprint — connect this repo (tang-source-plugin as root) then "Apply"
 # https://render.com/docs/blueprint-spec
 databases:
   - name: tangbuy-db
@@ -8,7 +8,7 @@ databases:
 
 services:
   - type: web
-    name: tangbuy-plugin
+    name: tang-source-plugin
     runtime: docker
     plan: free
     healthCheckPath: /api/plugin/health
@@ -18,7 +18,7 @@ services:
       # Render also injects PORT automatically; keep Spring aligned
       # 与 Dockerfile 默认一致；Starter 512Mi 下必须限制堆外内存，否则易 OOMKill
       - key: JAVA_OPTS
-        value: "-XX:MaxRAMPercentage=38.0 -XX:InitialRAMPercentage=12.0 -XX:MaxMetaspaceSize=96m -XX:CompressedClassSpaceSize=32m -XX:ReservedCodeCacheSize=32m -Xss256k -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
+        value: "-XX:MaxRAMPercentage=45.0 -XX:InitialRAMPercentage=20.0 -XX:MaxMetaspaceSize=128m -XX:ReservedCodeCacheSize=48m -Xss256k -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError"
       # Activate the persistent PostgreSQL + internal-auth profile
       - key: SPRING_PROFILES_ACTIVE
         value: "prod"

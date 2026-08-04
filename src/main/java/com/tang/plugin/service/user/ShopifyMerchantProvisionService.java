@@ -2,12 +2,11 @@ package com.tang.plugin.service.user;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.tang.common.core.exception.CustomException;
-import com.tang.plugin.domain.entity.user.AppUser;
+import com.tang.plugin.client.user.dto.Oauth2TokenResponse;
 import com.tang.plugin.domain.entity.user.ShopifyStoreAuth;
 import com.tang.plugin.domain.entity.user.UserShop;
-import com.tang.plugin.repository.AppUserRepository;
 import com.tang.plugin.repository.UserShopRepository;
-import com.tang.plugin.service.auth.PasswordService;
+import com.tang.plugin.service.auth.ShopifyPlatformLoginService;
 import com.tang.plugin.service.order.external.client.ShopifyGraphqlClient;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -15,14 +14,12 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Silent Tangbuy account provisioning for Shopify App Store / embedded install.
  *
  * <p>When a shop has (or just received) an offline access token but no {@code user_shop} binding,
- * create or reuse a Tangbuy {@code app_user} from the Shopify shop email and bind ownership.
- * Merchants can later set a password via forgot-password using that email.
+ * create or reuse a Tangbuy platform user from the Shopify shop email and bind ownership.
  */
 @Slf4j
 @Service
@@ -42,15 +39,13 @@ public class ShopifyMerchantProvisionService {
             """;
 
     @Resource
-    private AppUserRepository appUserRepository;
-    @Resource
     private UserShopRepository userShopRepository;
     @Resource
     private ShopifyStoreAuthService shopifyStoreAuthService;
     @Resource
     private ShopifyGraphqlClient shopifyGraphqlClient;
     @Resource
-    private PasswordService passwordService;
+    private ShopifyPlatformLoginService shopifyPlatformLoginService;
 
     /**
      * Ensure a Tangbuy user owns this shop. Uses ACTIVE offline token to read shop email when needed.
@@ -58,22 +53,36 @@ public class ShopifyMerchantProvisionService {
      * @return bound user id
      */
     public Long ensureUserBoundToShop(String shopName, String shopDomain) {
+        return ensureUserBoundToShop(shopName, shopDomain, false);
+    }
+
+    public Long ensureUserBoundToShop(String shopName, String shopDomain, boolean repairExistingBinding) {
         Optional<UserShop> existing = userShopRepository.findByShopName(shopName);
         if (existing.isPresent()) {
             return existing.get().getUserId();
         }
 
+        return provisionAndBind(shopName, shopDomain, false);
+    }
+
+    private Long provisionAndBind(String shopName, String shopDomain, boolean repairExistingBinding) {
         ShopifyStoreAuth auth = shopifyStoreAuthService.findActiveByShopDomain(shopDomain)
                 .or(() -> shopifyStoreAuthService.findActiveByShopName(shopName))
                 .orElseThrow(() -> new CustomException(
                         "Shop is not authorized yet", 409, "NEED_OAUTH"));
 
         ShopProfile profile = fetchShopProfile(shopName, shopDomain, auth.getAccessToken());
-        AppUser user = findOrCreateUser(profile);
-        UserShop binding = userShopRepository.upsertBinding(user.getId(), shopName, shopDomain);
+        Long userId = loginPlatformUser(shopName, profile);
+        UserShop binding;
+        if (repairExistingBinding) {
+            userShopRepository.updateOwnerByShopName(userId, shopName, shopDomain);
+            binding = userShopRepository.findByShopName(shopName).orElse(null);
+        } else {
+            binding = userShopRepository.upsertBinding(userId, shopName, shopDomain);
+        }
         log.info("Silent provision bound userId={} shopName={} email={} bindingId={}",
-                user.getId(), shopName, user.getEmail(), binding.getId());
-        return user.getId();
+                userId, shopName, profile.email(), binding == null ? null : binding.getId());
+        return userId;
     }
 
     /**
@@ -100,13 +109,13 @@ public class ShopifyMerchantProvisionService {
         }
 
         ShopProfile profile = fetchShopProfile(shopName, shopDomain, accessToken);
-        AppUser user = findOrCreateUser(profile);
-        userShopRepository.upsertBinding(user.getId(), shopName, shopDomain);
-        log.info("Auto-provision OAuth created binding userId={} shopName={}", user.getId(), shopName);
-        return user.getId();
+        Long userId = loginPlatformUser(shopName, profile);
+        userShopRepository.upsertBinding(userId, shopName, shopDomain);
+        log.info("Auto-provision OAuth created binding userId={} shopName={}", userId, shopName);
+        return userId;
     }
 
-    private ShopProfile fetchShopProfile(String shopName, String shopDomain, String accessToken) {
+    public ShopProfile fetchShopProfile(String shopName, String shopDomain, String accessToken) {
         String email = null;
         String name = shopName;
         try {
@@ -133,24 +142,17 @@ public class ShopifyMerchantProvisionService {
         return new ShopProfile(email.toLowerCase(), name);
     }
 
-    private AppUser findOrCreateUser(ShopProfile profile) {
-        Optional<AppUser> existing = appUserRepository.findByEmail(profile.email());
-        if (existing.isPresent()) {
-            return existing.get();
+    private Long loginPlatformUser(String shopName, ShopProfile profile) {
+        Oauth2TokenResponse token = shopifyPlatformLoginService.login(shopName, profile.email(), profile.name());
+        if (token == null || StringUtils.isBlank(token.getUuid())) {
+            throw new CustomException("Platform token user missing", 401, "UNAUTHENTICATED");
         }
-        // Random unusable password — merchant uses forgot-password / change-password later.
-        String randomPassword = UUID.randomUUID().toString().replace("-", "") + "Aa1!";
-        AppUser user = new AppUser()
-                .setEmail(profile.email())
-                .setPasswordHash(passwordService.hash(randomPassword))
-                .setName(StringUtils.abbreviate(profile.name(), 120))
-                .setLocale("en")
-                .setTimezone("UTC")
-                .setCurrency("USD")
-                .setAiResponseLanguage("en")
-                .setStatus("active");
-        return appUserRepository.insert(user);
+        try {
+            return Long.valueOf(token.getUuid());
+        } catch (NumberFormatException e) {
+            throw new CustomException("Platform token user invalid", 401, "UNAUTHENTICATED");
+        }
     }
 
-    private record ShopProfile(String email, String name) {}
+    public record ShopProfile(String email, String name) {}
 }

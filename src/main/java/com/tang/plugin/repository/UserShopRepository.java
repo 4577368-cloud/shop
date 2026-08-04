@@ -151,6 +151,21 @@ public class UserShopRepository {
         }
     }
 
+    public void updateOwnerByShopName(Long userId, String shopName, String shopDomain) {
+        if (userId == null || shopName == null || shopName.isBlank()) return;
+        jdbcTemplate.update(
+                """
+                UPDATE user_shop
+                SET user_id = ?, shop_domain = ?, role = 'owner', bound_at = ?, updated_at = ?
+                WHERE shop_name = ?
+                """,
+                userId,
+                shopDomain,
+                Timestamp.from(Instant.now()),
+                Timestamp.from(Instant.now()),
+                shopName);
+    }
+
     /**
      * Physical delete. Used when the user unbinds a shop. Returns the number of
      * affected rows (0 = nothing to unbind).
